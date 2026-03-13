@@ -638,7 +638,10 @@ def format_prices_msg(prices: dict) -> str:
 
 # ── КЛАВИАТУРЫ ───────────────────────────────────────────────────────────────
 def main_keyboard():
+    from telegram import WebAppInfo
+    dashboard_url = "https://olgapshedromirskaya-sys.github.io/luna-crypto-api/dashboard.html"
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Открыть дашборд", web_app=WebAppInfo(url=dashboard_url))],
         [InlineKeyboardButton("⭐ Мой список монет", callback_data="group_fave")],
         [InlineKeyboardButton("🔥 Топ монеты",       callback_data="group_top"),
          InlineKeyboardButton("⚡ Альткоины",        callback_data="group_alt")],
