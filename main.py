@@ -99,6 +99,78 @@ def calc_bollinger(close: pd.Series, period: int = 20):
     }
 
 
+
+def detect_divergence(close: pd.Series, rsi_series: pd.Series, macd_hist: pd.Series, lookback: int = 30) -> dict:
+    """Определяет дивергенцию между ценой и RSI/MACD."""
+    if len(close) < lookback:
+        return {"rsi": None, "macd": None}
+
+    price = close.iloc[-lookback:]
+    rsi   = rsi_series.iloc[-lookback:]
+    hist  = macd_hist.iloc[-lookback:]
+
+    def find_pivots(series, order=5):
+        highs, lows = [], []
+        for i in range(order, len(series) - order):
+            window = series.iloc[i-order:i+order+1]
+            if series.iloc[i] == window.max():
+                highs.append(i)
+            if series.iloc[i] == window.min():
+                lows.append(i)
+        return highs, lows
+
+    price_highs, price_lows = find_pivots(price)
+    rsi_highs,   rsi_lows   = find_pivots(rsi)
+    hist_highs,  hist_lows  = find_pivots(hist)
+
+    rsi_div  = None
+    macd_div = None
+
+    # Бычья RSI: цена ниже, RSI выше
+    if len(price_lows) >= 2 and len(rsi_lows) >= 2:
+        p1, p2 = price_lows[-2], price_lows[-1]
+        r1, r2 = rsi_lows[-2],   rsi_lows[-1]
+        if price.iloc[p2] < price.iloc[p1] and rsi.iloc[r2] > rsi.iloc[r1]:
+            rsi_div = "bullish"
+
+    # Медвежья RSI: цена выше, RSI ниже
+    if rsi_div is None and len(price_highs) >= 2 and len(rsi_highs) >= 2:
+        p1, p2 = price_highs[-2], price_highs[-1]
+        r1, r2 = rsi_highs[-2],   rsi_highs[-1]
+        if price.iloc[p2] > price.iloc[p1] and rsi.iloc[r2] < rsi.iloc[r1]:
+            rsi_div = "bearish"
+
+    # Скрытая бычья RSI: цена выше min, RSI ниже — продолжение роста
+    if rsi_div is None and len(price_lows) >= 2 and len(rsi_lows) >= 2:
+        p1, p2 = price_lows[-2], price_lows[-1]
+        r1, r2 = rsi_lows[-2],   rsi_lows[-1]
+        if price.iloc[p2] > price.iloc[p1] and rsi.iloc[r2] < rsi.iloc[r1]:
+            rsi_div = "hidden_bullish"
+
+    # Скрытая медвежья RSI: цена ниже max, RSI выше — продолжение падения
+    if rsi_div is None and len(price_highs) >= 2 and len(rsi_highs) >= 2:
+        p1, p2 = price_highs[-2], price_highs[-1]
+        r1, r2 = rsi_highs[-2],   rsi_highs[-1]
+        if price.iloc[p2] < price.iloc[p1] and rsi.iloc[r2] > rsi.iloc[r1]:
+            rsi_div = "hidden_bearish"
+
+    # Бычья MACD: цена ниже, гистограмма выше
+    if len(price_lows) >= 2 and len(hist_lows) >= 2:
+        p1, p2 = price_lows[-2], price_lows[-1]
+        h1, h2 = hist_lows[-2],  hist_lows[-1]
+        if price.iloc[p2] < price.iloc[p1] and hist.iloc[h2] > hist.iloc[h1]:
+            macd_div = "bullish"
+
+    # Медвежья MACD: цена выше, гистограмма ниже
+    if macd_div is None and len(price_highs) >= 2 and len(hist_highs) >= 2:
+        p1, p2 = price_highs[-2], price_highs[-1]
+        h1, h2 = hist_highs[-2],  hist_highs[-1]
+        if price.iloc[p2] > price.iloc[p1] and hist.iloc[h2] < hist.iloc[h1]:
+            macd_div = "bearish"
+
+    return {"rsi": rsi_div, "macd": macd_div}
+
+
 def find_support_resistance(df: pd.DataFrame, lookback: int = 50):
     """Ищет уровни поддержки и сопротивления по последним N свечам"""
     recent = df.tail(lookback)
@@ -290,9 +362,48 @@ async def analyze(symbol: str, interval: str = "60"):
     macd = calc_macd(close)
     ema50 = calc_ema(close, 50)
     ema200 = calc_ema(close, 200)
+    sma30 = round(float(close.rolling(30).mean().iloc[-1]), 4)
+    sma90 = round(float(close.rolling(90).mean().iloc[-1]), 4) if len(close) >= 90 else None
     bb = calc_bollinger(close)
     levels = find_support_resistance(df)
+    # Полные серии для дивергенции
+    rsi_full  = close.apply(lambda x: x)  # placeholder
+    rsi_series = pd.Series([
+        float(v) for v in
+        close.ewm(com=13, adjust=False).mean() / close.ewm(com=13, adjust=False).mean()
+    ])
+    # Считаем полный RSI как серию
+    delta = close.diff()
+    gain  = delta.clip(lower=0)
+    loss  = (-delta).clip(lower=0)
+    avg_gain = gain.ewm(com=13, adjust=False).mean()
+    avg_loss = loss.ewm(com=13, adjust=False).mean()
+    rs_series = avg_gain / avg_loss.replace(0, 1e-10)
+    rsi_full_series = 100 - (100 / (1 + rs_series))
+
+    ema12_s = close.ewm(span=12, adjust=False).mean()
+    ema26_s = close.ewm(span=26, adjust=False).mean()
+    macd_line_s = ema12_s - ema26_s
+    signal_line_s = macd_line_s.ewm(span=9, adjust=False).mean()
+    macd_hist_s = macd_line_s - signal_line_s
+
+    divergence = detect_divergence(close, rsi_full_series, macd_hist_s)
     signal_data = determine_signal(rsi, macd, price, ema50, ema200, bb)
+
+    # Сигнал MA30/90
+    ma_signal = "neutral"
+    ma_cross = None
+    if sma90:
+        prev_sma30 = round(float(close.rolling(30).mean().iloc[-2]), 4)
+        prev_sma90 = round(float(close.rolling(90).mean().iloc[-2]), 4)
+        if prev_sma30 < prev_sma90 and sma30 > sma90:
+            ma_cross = "golden"   # быстрая пересекла медленную снизу вверх — бычий сигнал
+        elif prev_sma30 > prev_sma90 and sma30 < sma90:
+            ma_cross = "death"    # быстрая пересекла медленную сверху вниз — медвежий сигнал
+        if sma30 > sma90:
+            ma_signal = "bullish"
+        elif sma30 < sma90:
+            ma_signal = "bearish"
     trade = calc_trade_levels(price, signal_data["signal"], atr)
 
     # Изменение цены за период
@@ -314,8 +425,13 @@ async def analyze(symbol: str, interval: str = "60"):
             "macd": macd,
             "ema50": ema50,
             "ema200": ema200,
+            "sma30": sma30,
+            "sma90": sma90,
+            "ma_signal": ma_signal,
+            "ma_cross": ma_cross,
             "bollinger": bb,
-            "atr": round(atr, 4)
+            "atr": round(atr, 4),
+            "divergence": divergence
         },
         "levels": levels,
         "signal": signal_data,
