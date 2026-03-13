@@ -333,6 +333,109 @@ async def get_price(symbol: str):
     }
 
 
+@app.get("/history/{symbol}")
+async def get_history(symbol: str):
+    """
+    Исторический анализ: динамика за 24ч/7д/30д/год,
+    тренды, максимумы/минимумы, объёмы
+    """
+    symbol = symbol.upper()
+
+    # Параллельно тянем разные периоды
+    async def fetch(interval, limit):
+        try:
+            df = await get_klines(symbol, interval, limit)
+            return df
+        except:
+            return None
+
+    # Дневные свечи за 365 дней + часовые за 7 дней
+    daily, hourly = await asyncio.gather(
+        fetch("D", 365),
+        fetch("60", 168)
+    )
+
+    result = {"symbol": symbol}
+
+    if daily is not None and len(daily) > 0:
+        price_now = float(daily["close"].iloc[-1])
+
+        # Динамика по периодам
+        def pct_change(days_ago):
+            idx = max(0, len(daily) - days_ago - 1)
+            old_price = float(daily["close"].iloc[idx])
+            return round((price_now - old_price) / old_price * 100, 2) if old_price else 0
+
+        result["price_changes"] = {
+            "24h":  pct_change(1),
+            "7d":   pct_change(7),
+            "30d":  pct_change(30),
+            "90d":  pct_change(90),
+            "365d": pct_change(364),
+        }
+
+        # Максимум/минимум за год
+        year_data = daily.tail(365)
+        result["year_high"] = round(float(year_data["high"].max()), 4)
+        result["year_low"]  = round(float(year_data["low"].min()), 4)
+        result["from_high_pct"] = round((price_now - result["year_high"]) / result["year_high"] * 100, 2)
+        result["from_low_pct"]  = round((price_now - result["year_low"])  / result["year_low"]  * 100, 2)
+
+        # Тренды
+        def trend(days):
+            if len(daily) < days:
+                return "недостаточно данных"
+            recent = daily.tail(days)["close"]
+            slope = float(recent.iloc[-1]) - float(recent.iloc[0])
+            pct = slope / float(recent.iloc[0]) * 100
+            if pct > 5:   return f"🟢 Рост +{pct:.1f}%"
+            elif pct < -5: return f"🔴 Падение {pct:.1f}%"
+            else:          return f"⚪ Боковик {pct:+.1f}%"
+
+        result["trends"] = {
+            "3d":  trend(3),
+            "7d":  trend(7),
+            "30d": trend(30),
+            "90d": trend(90),
+        }
+
+        # Серия дней роста/падения подряд
+        closes = daily["close"].tail(30).values
+        streak = 0
+        direction = None
+        for i in range(len(closes)-1, 0, -1):
+            if closes[i] > closes[i-1]:
+                if direction is None: direction = "up"
+                if direction == "up": streak += 1
+                else: break
+            elif closes[i] < closes[i-1]:
+                if direction is None: direction = "down"
+                if direction == "down": streak += 1
+                else: break
+            else:
+                break
+
+        if direction == "up":
+            result["streak"] = f"🟢 Растёт {streak} дней подряд"
+        elif direction == "down":
+            result["streak"] = f"🔴 Падает {streak} дней подряд"
+        else:
+            result["streak"] = "⚪ Без чёткого направления"
+
+        # Объём — сравниваем текущий с средним
+        avg_vol = float(daily["volume"].tail(30).mean())
+        cur_vol = float(daily["volume"].iloc[-1])
+        vol_ratio = cur_vol / avg_vol if avg_vol > 0 else 1
+        if vol_ratio > 1.5:
+            result["volume_signal"] = f"📈 Объём выше нормы в {vol_ratio:.1f}x — повышенный интерес"
+        elif vol_ratio < 0.5:
+            result["volume_signal"] = f"📉 Объём ниже нормы в {1/vol_ratio:.1f}x — низкий интерес"
+        else:
+            result["volume_signal"] = f"⚪ Объём в норме"
+
+    return result
+
+
 @app.get("/prices")
 async def get_multiple_prices(symbols: str = "BTC,ETH,SOL,XRP,BNB"):
     """Цены нескольких монет сразу"""
