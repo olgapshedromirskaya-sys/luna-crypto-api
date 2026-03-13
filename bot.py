@@ -294,13 +294,17 @@ def format_multi_analysis(symbol: str, all_data: dict, budget_usd: float = 22.0)
         entry = trd["entry"]
 
         if sig1h == "BUY":
-            sl  = min(trd["stop_loss"], entry * 0.97)
-            tp1 = max(trd["tp1"], entry * 1.02)
-            tp2 = max(trd["tp2"], entry * 1.04)
-        else:
-            sl  = max(trd["stop_loss"], entry * 1.03)
-            tp1 = min(trd["tp1"], entry * 0.97)
-            tp2 = min(trd["tp2"], entry * 0.94)
+            sl  = entry * 0.97   # стоп-лосс на 3% ниже входа
+            tp1 = entry * 1.03   # цель 1 на 3% выше
+            tp2 = entry * 1.06   # цель 2 на 6% выше
+        elif sig1h == "SELL":
+            sl  = entry * 1.03   # стоп-лосс на 3% выше (шорт)
+            tp1 = entry * 0.97   # цель 1 на 3% ниже
+            tp2 = entry * 0.94   # цель 2 на 6% ниже
+        else:  # HOLD
+            sl  = entry * 0.96   # широкий стоп-лосс 4% ниже
+            tp1 = entry * 1.03   # цель 1 на 3% выше
+            tp2 = entry * 1.06   # цель 2 на 6% выше
 
         sl_pct  = round((sl  - entry) / entry * 100, 1)
         tp1_pct = round((tp1 - entry) / entry * 100, 1)
@@ -446,13 +450,17 @@ def format_analysis(data: dict, budget_usd: float = 22.0) -> str:
     # ── ПЛАН СДЕЛКИ (с исправлением направления) ─────────────
     entry = trd["entry"]
     if sig["signal"] == "BUY":
-        sl  = min(trd["stop_loss"], entry * 0.97)
-        tp1 = max(trd["tp1"], entry * 1.02)
-        tp2 = max(trd["tp2"], entry * 1.04)
-    else:
-        sl  = max(trd["stop_loss"], entry * 1.03)
-        tp1 = min(trd["tp1"], entry * 0.97)
-        tp2 = min(trd["tp2"], entry * 0.94)
+        sl  = entry * 0.97   # стоп-лосс на 3% ниже входа
+        tp1 = entry * 1.03   # цель 1 на 3% выше
+        tp2 = entry * 1.06   # цель 2 на 6% выше
+    elif sig["signal"] == "SELL":
+        sl  = entry * 1.03   # стоп-лосс на 3% выше (шорт)
+        tp1 = entry * 0.97   # цель 1 на 3% ниже
+        tp2 = entry * 0.94   # цель 2 на 6% ниже
+    else:  # HOLD
+        sl  = entry * 0.96   # широкий стоп-лосс 4% ниже
+        tp1 = entry * 1.03   # цель 1 на 3% выше
+        tp2 = entry * 1.06   # цель 2 на 6% выше
 
     sl_pct  = round((sl  - entry) / entry * 100, 1)
     tp1_pct = round((tp1 - entry) / entry * 100, 1)
