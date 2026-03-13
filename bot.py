@@ -69,93 +69,122 @@ def format_price(price: float) -> str:
         return f"${price:.5f}"
 
 def format_analysis(data: dict, budget_usd: float = 22.0) -> str:
-    sym  = data["symbol"]
-    pair = data["pair"]
+    sym   = data["symbol"]
+    pair  = data["pair"]
     price = data["price"]
-    chg  = data["change_24h"]
-    ind  = data["indicators"]
-    sig  = data["signal"]
-    trd  = data["trade"]
-    lvl  = data["levels"]
+    chg   = data["change_24h"]
+    ind   = data["indicators"]
+    sig   = data["signal"]
+    trd   = data["trade"]
+    lvl   = data["levels"]
+    ce    = change_emoji(chg)
+    usd_to_rub = 90
 
-    se = signal_emoji(sig["signal"])
-    ce = change_emoji(chg)
+    # Главный вывод простым языком
+    if sig["signal"] == "BUY":
+        main_verdict = "🟢 *МОЖНО ПОКУПАТЬ*"
+        main_explain = "Индикаторы показывают хороший момент для входа"
+    elif sig["signal"] == "SELL":
+        main_verdict = "🔴 *ЛУЧШЕ НЕ ПОКУПАТЬ*"
+        main_explain = "Сейчас не лучший момент — цена может упасть"
+    else:
+        main_verdict = "🟡 *ПОДОЖДАТЬ*"
+        main_explain = "Непонятная ситуация — лучше понаблюдать ещё"
 
-    # Сигнал
-    signal_line = f"{se} *{sig['label']}* — уверенность {sig['confidence']}%"
-
-    # RSI расшифровка
+    # RSI простым языком
     rsi = ind["rsi"]
     if rsi < 30:
-        rsi_txt = f"{rsi} 🔵 перепроданность (хорошо для покупки)"
-    elif rsi > 70:
-        rsi_txt = f"{rsi} 🔴 перекупленность (осторожно)"
+        rsi_txt = f"RSI={rsi} — монета сильно подешевела, возможен отскок вверх 🔵"
+    elif rsi < 45:
+        rsi_txt = f"RSI={rsi} — монета немного дешёвая, нейтрально 🟡"
+    elif rsi < 55:
+        rsi_txt = f"RSI={rsi} — монета в норме, без перегрева ⚪"
+    elif rsi < 70:
+        rsi_txt = f"RSI={rsi} — монета немного дорогая, осторожно 🟠"
     else:
-        rsi_txt = f"{rsi} ⚪ нейтральная зона"
+        rsi_txt = f"RSI={rsi} — монета перегрета после роста, риск отката 🔴"
 
-    # MACD расшифровка
+    # MACD
     macd = ind["macd"]
-    macd_txt = "🟢 бычий — импульс роста" if macd["cross"] == "bullish" else "🔴 медвежий — импульс снижения"
+    macd_txt = "сигнал роста 📈" if macd["cross"] == "bullish" else "сигнал снижения 📉"
 
-    # Тренд EMA
+    # Тренд
     ema50, ema200 = ind["ema50"], ind["ema200"]
     if price > ema50 > ema200:
-        trend_txt = "📈 Устойчивый рост (цена выше EMA50 и EMA200)"
+        trend_txt = "уверенный рост 📈 — монета растёт уже несколько недель"
     elif price < ema50 < ema200:
-        trend_txt = "📉 Нисходящий тренд (цена ниже EMA50 и EMA200)"
+        trend_txt = "падение 📉 — покупать рискованно"
     elif price > ema50:
-        trend_txt = "↗️ Краткосрочный рост (выше EMA50)"
+        trend_txt = "слабый рост ↗️ — подъём неустойчивый"
     else:
-        trend_txt = "↘️ Краткосрочное снижение (ниже EMA50)"
+        trend_txt = "небольшая коррекция ↘️"
+
+    # Bollinger
+    bb_pos = round(ind["bollinger"]["position"] * 100)
+    if bb_pos < 20:
+        bb_txt = f"цена у нижней границы — возможен отскок вверх"
+    elif bb_pos > 80:
+        bb_txt = f"цена у верхней границы — возможна коррекция вниз"
+    else:
+        bb_txt = f"цена в середине диапазона — нейтрально"
 
     # Уровни
-    sup = " / ".join([format_price(s) for s in lvl["support"]]) or "не найдены"
-    res = " / ".join([format_price(r) for r in lvl["resistance"]]) or "не найдены"
+    sup = lvl["support"]
+    res = lvl["resistance"]
+    sup_txt = " и ".join([format_price(s) for s in sup]) if sup else "не определена"
+    res_txt = " и ".join([format_price(r) for r in res]) if res else "не определено"
 
-    # Расчёт прибыли для бюджета
-    invest = min(budget_usd * 0.7, budget_usd - 5)  # вкладываем 70%, остаток резерв
-    coins_qty = invest / price if price > 0 else 0
+    # Уровни сделки — исправляем логику для BUY
+    entry = trd["entry"]
+    if sig["signal"] == "BUY":
+        sl  = min(trd["stop_loss"], entry * 0.97)   # SL всегда НИЖЕ цены
+        tp1 = max(trd["tp1"], entry * 1.02)          # TP1 всегда ВЫШЕ цены
+        tp2 = max(trd["tp2"], entry * 1.04)          # TP2 ещё выше
+    else:
+        sl  = max(trd["stop_loss"], entry * 1.03)
+        tp1 = min(trd["tp1"],  entry * 0.97)
+        tp2 = min(trd["tp2"],  entry * 0.94)
 
-    tp1_profit = coins_qty * (trd["tp1"] - price)
-    tp2_profit = coins_qty * (trd["tp2"] - price)
-    sl_loss    = coins_qty * (trd["stop_loss"] - price)
+    sl_pct  = round((sl  - entry) / entry * 100, 1)
+    tp1_pct = round((tp1 - entry) / entry * 100, 1)
+    tp2_pct = round((tp2 - entry) / entry * 100, 1)
 
-    usd_to_rub = 90  # примерный курс
+    # Расчёт денег
+    invest  = round(min(budget_usd * 0.7, budget_usd - 5), 0)
+    reserve = budget_usd - invest
+    qty     = invest / price if price > 0 else 0
+    tp1_usd = qty * (tp1 - entry)
+    tp2_usd = qty * (tp2 - entry)
+    sl_usd  = qty * (sl  - entry)
 
-    # Сборка сообщения
-    msg = f"""🔮 *LUNA — Анализ {pair}*
-━━━━━━━━━━━━━━━━━━━━
-💰 Цена: *{format_price(price)}* {ce} {chg:+.2f}% за 24ч
-
-{signal_line}
-
-📊 *Индикаторы:*
-• RSI: {rsi_txt}
-• MACD: {macd_txt}
-• Тренд: {trend_txt}
-• Bollinger: цена на {round(ind['bollinger']['position']*100)}% от нижней к верхней полосе
-
-📍 *Уровни:*
-• Поддержка: {sup}
-• Сопротивление: {res}
-
-🎯 *Сделка:*
-• Вход: {format_price(trd['entry'])}
-• Стоп-лосс: {format_price(trd['stop_loss'])} ({trd['stop_pct']:+.1f}%) — _автопродажа при убытке_
-• Тейк-профит 1: {format_price(trd['tp1'])} ({trd['tp1_pct']:+.1f}%) — _фиксируй первую прибыль_
-• Тейк-профит 2: {format_price(trd['tp2'])} ({trd['tp2_pct']:+.1f}%) — _если рост продолжится_
-
-💵 *Расчёт для ${invest:.0f} (из бюджета ${budget_usd:.0f}):*
-• Купишь: {coins_qty:.4f} {sym}
-• При ТП1: *+${tp1_profit:.2f}* (+{tp1_profit*usd_to_rub:.0f} ₽)
-• При ТП2: *+${tp2_profit:.2f}* (+{tp2_profit*usd_to_rub:.0f} ₽)
-• Стоп-лосс: *{sl_loss:.2f}$* ({sl_loss*usd_to_rub:.0f} ₽)
-• Резерв: ${budget_usd - invest:.0f} держи в USDT
-
-⚠️ _Не является финансовым советом. Крипто — высокий риск._"""
-
+    msg = (
+        f"🔮 *LUNA — {pair}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"💰 Цена сейчас: *{format_price(price)}*  {ce} {chg:+.2f}% за сутки\n\n"
+        f"{main_verdict}\n"
+        f"_{main_explain}_\n\n"
+        f"📊 *Что говорят индикаторы:*\n"
+        f"• {rsi_txt}\n"
+        f"• MACD — {macd_txt}\n"
+        f"• Тренд — {trend_txt}\n"
+        f"• Диапазон — {bb_txt}\n\n"
+        f"📍 *Ключевые уровни:*\n"
+        f"• Поддержка {sup_txt} — здесь цена обычно отскакивает вверх\n"
+        f"• Сопротивление {res_txt} — здесь цена обычно тормозит\n\n"
+        f"🎯 *План сделки:*\n"
+        f"• Купить по: *{format_price(entry)}*\n"
+        f"• Стоп-лосс: *{format_price(sl)}* ({sl_pct:+.1f}%) — если цена упадёт сюда, продай чтобы не потерять больше\n"
+        f"• Цель 1: *{format_price(tp1)}* ({tp1_pct:+.1f}%) — продай половину и зафикси прибыль\n"
+        f"• Цель 2: *{format_price(tp2)}* ({tp2_pct:+.1f}%) — если рост продолжится, продай остаток\n\n"
+        f"💵 *Считаем для твоих ${invest:.0f}:*\n"
+        f"• Купишь: {qty:.4f} {sym}\n"
+        f"• Прибыль при Цели 1: *+${tp1_usd:.2f}* (≈ +{tp1_usd*usd_to_rub:.0f} ₽)\n"
+        f"• Прибыль при Цели 2: *+${tp2_usd:.2f}* (≈ +{tp2_usd*usd_to_rub:.0f} ₽)\n"
+        f"• Максимальный убыток: *{sl_usd:.2f}$* (≈ {sl_usd*usd_to_rub:.0f} ₽)\n"
+        f"• Оставь ${reserve:.0f} в USDT — это твой резерв\n\n"
+        f"⚠️ _Это анализ, не финансовый совет. Крипто — высокий риск._"
+    )
     return msg
-
 
 def format_prices_msg(prices: dict) -> str:
     lines = ["💹 *Текущие цены (Bybit)*\n"]
