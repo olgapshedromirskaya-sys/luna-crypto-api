@@ -439,6 +439,152 @@ async def analyze(symbol: str, interval: str = "60"):
     }
 
 
+
+@app.get("/futures/{symbol}")
+async def get_futures(symbol: str):
+    """Данные по фьючерсам: открытый интерес, фандинг, лонги/шорты"""
+    symbol = symbol.upper()
+    async with httpx.AsyncClient(timeout=15) as client:
+        # Открытый интерес
+        oi_r = await client.get(
+            f"{BYBIT_BASE}/v5/market/open-interest",
+            params={"category": "linear", "symbol": f"{symbol}USDT", "intervalTime": "1h", "limit": 1}
+        )
+        # Фандинг рейт
+        fr_r = await client.get(
+            f"{BYBIT_BASE}/v5/market/funding/history",
+            params={"category": "linear", "symbol": f"{symbol}USDT", "limit": 1}
+        )
+        # Тикер фьючерса (лонги/шорты ratio)
+        tk_r = await client.get(
+            f"{BYBIT_BASE}/v5/market/tickers",
+            params={"category": "linear", "symbol": f"{symbol}USDT"}
+        )
+
+    result = {"symbol": symbol}
+
+    try:
+        oi_data = oi_r.json()
+        if oi_data.get("result", {}).get("list"):
+            oi = float(oi_data["result"]["list"][0]["openInterest"])
+            result["open_interest"] = round(oi, 2)
+            result["open_interest_fmt"] = f"{oi/1e6:.2f}M" if oi > 1e6 else f"{oi/1e3:.1f}K"
+    except: pass
+
+    try:
+        fr_data = fr_r.json()
+        if fr_data.get("result", {}).get("list"):
+            fr = float(fr_data["result"]["list"][0]["fundingRate"]) * 100
+            result["funding_rate"] = round(fr, 4)
+            if fr > 0.05:
+                result["funding_signal"] = f"🔴 Высокий фандинг +{fr:.4f}% — лонги переплачивают, рынок перегрет"
+            elif fr < -0.05:
+                result["funding_signal"] = f"🟢 Отрицательный фандинг {fr:.4f}% — шорты переплачивают, возможен рост"
+            elif fr > 0:
+                result["funding_signal"] = f"⚪ Фандинг +{fr:.4f}% — нейтрально, небольшой перевес лонгов"
+            else:
+                result["funding_signal"] = f"⚪ Фандинг {fr:.4f}% — нейтрально, небольшой перевес шортов"
+    except: pass
+
+    try:
+        tk_data = tk_r.json()
+        if tk_data.get("result", {}).get("list"):
+            t = tk_data["result"]["list"][0]
+            price = float(t.get("lastPrice", 0))
+            mark  = float(t.get("markPrice", 0))
+            index = float(t.get("indexPrice", 0))
+            oi_val = float(t.get("openInterestValue", 0))
+            result["mark_price"]  = round(mark, 4)
+            result["index_price"] = round(index, 4)
+            result["oi_value_usd"] = round(oi_val, 0)
+            result["oi_value_fmt"] = f"${oi_val/1e6:.1f}M" if oi_val > 1e6 else f"${oi_val/1e3:.0f}K"
+            # Basis (разница спот vs фьючерс)
+            if price > 0 and index > 0:
+                basis = (price - index) / index * 100
+                result["basis"] = round(basis, 4)
+                if basis > 0.3:
+                    result["basis_signal"] = f"🔴 Фьючерс дороже спота на {basis:.2f}% — перегрев"
+                elif basis < -0.3:
+                    result["basis_signal"] = f"🟢 Фьючерс дешевле спота на {abs(basis):.2f}% — недооценён"
+                else:
+                    result["basis_signal"] = f"⚪ Фьючерс ≈ спот (±{abs(basis):.2f}%) — нейтрально"
+    except: pass
+
+    return result
+
+
+@app.get("/screener")
+async def screener(coins: str = "ETH,SOL,XRP,ADA,LTC,LINK,ATOM,BCH,NEAR,ICP,TON,HYPE,AVAX,SUI,DOT,OP"):
+    """Скрининг монет — ищет лучшие возможности прямо сейчас"""
+    symbols = [s.strip().upper() for s in coins.split(",")]
+
+    async def analyze_one(sym):
+        try:
+            df = await get_klines(sym, "60", 200)
+            if df is None or len(df) < 50:
+                return None
+            close = df["close"]
+            price = float(close.iloc[-1])
+            price_24h_ago = float(close.iloc[-25]) if len(close) > 25 else float(close.iloc[0])
+            chg24 = round((price - price_24h_ago) / price_24h_ago * 100, 2)
+
+            rsi    = calc_rsi(close)
+            macd   = calc_macd(close)
+            ema50  = calc_ema(close, 50)
+            ema200 = calc_ema(close, 200)
+            bb     = calc_bollinger(close)
+            sma30  = round(float(close.rolling(30).mean().iloc[-1]), 4)
+            sma90  = round(float(close.rolling(90).mean().iloc[-1]), 4) if len(close) >= 90 else None
+            signal = determine_signal(rsi, macd, price, ema50, ema200, bb)
+
+            # Score for ranking
+            score = signal["score"]
+            # Bonus for RSI in buy zone
+            if 35 < rsi < 55: score += 1
+            # Bonus for price above both MAs
+            if sma90 and sma30 > sma90 and price > sma30: score += 1
+
+            return {
+                "symbol": sym,
+                "price": round(price, 4),
+                "change_24h": chg24,
+                "signal": signal["signal"],
+                "confidence": signal["confidence"],
+                "score": round(score, 2),
+                "rsi": rsi,
+                "ma_trend": "up" if (sma90 and sma30 > sma90) else "down" if (sma90 and sma30 < sma90) else "neutral",
+                "trend": "up" if price > ema50 > ema200 else "down" if price < ema50 < ema200 else "mixed",
+            }
+        except:
+            return None
+
+    results = await asyncio.gather(*[analyze_one(s) for s in symbols])
+    valid = [r for r in results if r]
+    # Sort: BUY first by score desc, then HOLD, then SELL
+    order = {"BUY": 0, "HOLD": 1, "SELL": 2}
+    valid.sort(key=lambda x: (order.get(x["signal"], 3), -x["score"]))
+    return valid
+
+@app.get("/klines/{symbol}")
+async def get_klines_endpoint(symbol: str, interval: str = "60", limit: int = 60):
+    """Свечи для графика дашборда"""
+    symbol = symbol.upper()
+    df = await get_klines(symbol, interval, min(limit, 200))
+    if df is None or len(df) == 0:
+        return []
+    result = []
+    for _, row in df.iterrows():
+        result.append([
+            int(row["timestamp"]) if "timestamp" in df.columns else 0,
+            str(round(float(row["open"]),  6)),
+            str(round(float(row["high"]),  6)),
+            str(round(float(row["low"]),   6)),
+            str(round(float(row["close"]), 6)),
+            str(round(float(row["volume"]),2)),
+        ])
+    return result
+
+
 @app.get("/price/{symbol}")
 async def get_price(symbol: str):
     """Быстрое получение текущей цены"""
