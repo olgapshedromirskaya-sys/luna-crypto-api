@@ -253,11 +253,45 @@ def format_multi_analysis(symbol: str, all_data: dict, budget_usd: float = 22.0)
 
         macd_short = "импульс вверх 🟢" if macd == "bullish" else "импульс вниз 🔴"
 
+        # MA30/90 коротко
+        sma30_v = d["indicators"].get("sma30")
+        sma90_v = d["indicators"].get("sma90")
+        ma_sig  = d["indicators"].get("ma_signal", "neutral")
+        ma_cr   = d["indicators"].get("ma_cross")
+        if sma30_v and sma90_v:
+            if ma_cr == "golden":
+                ma_short = f"MA: 🌟 Золотой крест — сильный сигнал роста"
+            elif ma_cr == "death":
+                ma_short = f"MA: 💀 Крест смерти — сильный сигнал падения"
+            elif ma_sig == "bullish":
+                ma_short = f"MA30 > MA90 — тренд вверх 🟢"
+            elif ma_sig == "bearish":
+                ma_short = f"MA30 < MA90 — тренд вниз 🔴"
+            else:
+                ma_short = f"MA: боковик ⚪"
+        else:
+            ma_short = None
+
         lines_out.append(f"*{name}* ({use})")
         lines_out.append(f"  {sig_icon} *{sig_label}* — уверенность {conf}%")
         lines_out.append(f"  • {rsi_short}")
         lines_out.append(f"  • MACD: {macd_short}")
         lines_out.append(f"  • {trend_short}")
+        if ma_short:
+            lines_out.append(f"  • {ma_short}")
+
+        # Дивергенция в мульти-анализе
+        div_d = d["indicators"].get("divergence", {})
+        rdiv  = div_d.get("rsi")
+        mdiv  = div_d.get("macd")
+        if rdiv == "bullish" or mdiv == "bullish":
+            lines_out.append(f"  • 🔔 Бычья дивергенция — сигнал разворота вверх!")
+        elif rdiv == "bearish" or mdiv == "bearish":
+            lines_out.append(f"  • 🔔 Медвежья дивергенция — сигнал разворота вниз!")
+        elif rdiv in ("hidden_bullish",) or mdiv in ("hidden_bullish",):
+            lines_out.append(f"  • 🔍 Скрытая бычья — продолжение роста")
+        elif rdiv in ("hidden_bearish",) or mdiv in ("hidden_bearish",):
+            lines_out.append(f"  • 🔍 Скрытая медвежья — продолжение падения")
         lines_out.append("")
 
         if sig == "BUY":   buy_count  += 1
@@ -416,6 +450,71 @@ def format_analysis(data: dict, budget_usd: float = 22.0) -> str:
     else:
         macd_txt = "🔴 Импульс вниз — скорость падения ускоряется"
 
+    # ── СКОЛЬЗЯЩИЕ СРЕДНИЕ MA30 / MA90 ───────────────────────
+    sma30 = ind.get("sma30")
+    sma90 = ind.get("sma90")
+    ma_signal = ind.get("ma_signal", "neutral")
+    ma_cross  = ind.get("ma_cross")
+
+    if sma30 and sma90:
+        if ma_cross == "golden":
+            ma_cross_txt = "🌟 Золотой крест! MA30 пересекла MA90 снизу вверх — сильный сигнал роста"
+        elif ma_cross == "death":
+            ma_cross_txt = "💀 Крест смерти! MA30 пересекла MA90 сверху вниз — сильный сигнал падения"
+        else:
+            ma_cross_txt = None
+
+        if ma_signal == "bullish":
+            ma_trend = f"🟢 MA30 ({format_price(sma30)}) выше MA90 ({format_price(sma90)}) — среднесрочный тренд вверх"
+        elif ma_signal == "bearish":
+            ma_trend = f"🔴 MA30 ({format_price(sma30)}) ниже MA90 ({format_price(sma90)}) — среднесрочный тренд вниз"
+        else:
+            ma_trend = f"⚪ MA30 ({format_price(sma30)}) и MA90 ({format_price(sma90)}) — боковое движение"
+
+        if price > sma30 > sma90:
+            ma_position = "Цена выше обеих линий — уверенный рост"
+        elif price < sma30 < sma90:
+            ma_position = "Цена ниже обеих линий — уверенное падение"
+        elif price > sma30:
+            ma_position = "Цена выше быстрой MA30 — краткосрочный рост"
+        else:
+            ma_position = "Цена ниже быстрой MA30 — краткосрочное давление"
+    else:
+        ma_trend    = f"🟡 MA30 ({format_price(sma30) if sma30 else '?'}) — недостаточно данных для MA90"
+        ma_cross_txt = None
+        ma_position  = ""
+
+    # ── ДИВЕРГЕНЦИЯ ──────────────────────────────────────────
+    div      = ind.get("divergence", {})
+    rsi_div  = div.get("rsi")
+    macd_div = div.get("macd")
+
+    div_lines = []
+    if rsi_div == "bullish":
+        div_lines.append("🔔 *RSI: Бычья дивергенция!*")
+        div_lines.append("_Цена падала, RSI рос — продавцы слабеют, возможен разворот ВВЕРХ_")
+    elif rsi_div == "bearish":
+        div_lines.append("🔔 *RSI: Медвежья дивергенция!*")
+        div_lines.append("_Цена росла, RSI падал — покупатели слабеют, возможен разворот ВНИЗ_")
+    elif rsi_div == "hidden_bullish":
+        div_lines.append("🔍 *RSI: Скрытая бычья дивергенция*")
+        div_lines.append("_Сигнал продолжения роста — тренд вверх сохраняется_")
+    elif rsi_div == "hidden_bearish":
+        div_lines.append("🔍 *RSI: Скрытая медвежья дивергенция*")
+        div_lines.append("_Сигнал продолжения падения — тренд вниз сохраняется_")
+
+    if macd_div == "bullish":
+        div_lines.append("🔔 *MACD: Бычья дивергенция!*")
+        div_lines.append("_Импульс падения слабеет — разворот вверх близко_")
+    elif macd_div == "bearish":
+        div_lines.append("🔔 *MACD: Медвежья дивергенция!*")
+        div_lines.append("_Импульс роста слабеет — разворот вниз близко_")
+
+    if rsi_div and macd_div and rsi_div[:4] == macd_div[:4]:
+        div_lines.append("⚡ *Оба индикатора подтверждают — сигнал очень сильный!*")
+
+    div_block = "\n".join(div_lines) if div_lines else None
+
     # ── ТРЕНД (EMA) ───────────────────────────────────────────
     ema50, ema200 = ind["ema50"], ind["ema200"]
     if price > ema50 > ema200:
@@ -474,56 +573,58 @@ def format_analysis(data: dict, budget_usd: float = 22.0) -> str:
     tp2_usd = qty * (tp2 - entry)
     sl_usd  = qty * (sl  - entry)
 
-    msg = (
-        f"🔮 *LUNA — {pair}*\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"💰 Цена сейчас: *{format_price(price)}*  {ce} {chg:+.2f}% за сутки\n\n"
-
-        f"*{verdict}*\n"
-        f"_{verdict_why}_\n"
-        f"_{conf_txt}_\n\n"
-
-        f"━━━ Что говорят индикаторы ━━━\n\n"
-
-        f"🌡 *Термометр монеты (RSI = {rsi})*\n"
-        f"{rsi_verdict}\n"
-        f"_{rsi_action}_\n\n"
-
-        f"🧭 *Направление движения (MACD)*\n"
-        f"{macd_txt}\n\n"
-
-        f"📏 *Тренд (средние цены)*\n"
-        f"{trend_verdict}\n"
-        f"_{trend_explain}_\n\n"
-
-        f"📐 *Нормальный диапазон цены (Bollinger)*\n"
-        f"Верхняя граница: {format_price(bb['upper'])} | Нижняя: {format_price(bb['lower'])}\n"
-        f"{bb_txt}\n\n"
-
-        f"━━━ Ключевые уровни цены ━━━\n\n"
-        f"🟢 *Поддержка: {sup_txt}*\n"
-        f"_Здесь цена много раз останавливалась и отскакивала вверх — зона интереса покупателей_\n\n"
-        f"🔴 *Сопротивление: {res_txt}*\n"
-        f"_Здесь цена много раз тормозила — зона где продавцы активны_\n\n"
-
-        f"━━━ План сделки ━━━\n\n"
-        f"▶️ Купить по: *{format_price(entry)}*\n\n"
-        f"🛡 Стоп-лосс: *{format_price(sl)}* ({sl_pct:+.1f}%)\n"
-        f"_Если цена упадёт до этой отметки — продай. Это защита от большого убытка_\n\n"
-        f"🎯 Цель 1: *{format_price(tp1)}* ({tp1_pct:+.1f}%)\n"
-        f"_Когда цена дойдёт сюда — продай половину и зафикси первую прибыль_\n\n"
-        f"🎯 Цель 2: *{format_price(tp2)}* ({tp2_pct:+.1f}%)\n"
-        f"_Если рост продолжится — продай остаток здесь_\n\n"
-
-        f"━━━ Считаем для твоего бюджета ━━━\n\n"
-        f"💵 Вкладываешь: *${invest:.0f}* из ${budget_usd:.0f}\n"
-        f"🏦 Резерв: *${reserve:.0f}* держи в USDT на бирже — не трогай\n"
-        f"🪙 Купишь: *{qty:.4f} {sym}*\n\n"
-        f"При Цели 1 заработаешь: *+${tp1_usd:.2f}* (≈ +{tp1_usd*usd_to_rub:.0f} ₽)\n"
-        f"При Цели 2 заработаешь: *+${tp2_usd:.2f}* (≈ +{tp2_usd*usd_to_rub:.0f} ₽)\n"
-        f"Если сработает стоп-лосс: *{sl_usd:.2f}$* (≈ {sl_usd*usd_to_rub:.0f} ₽)\n\n"
-        f"⚠️ _Это анализ, не финансовый совет. Крипто — высокий риск._"
-    )
+    parts = [
+        f"🔮 *LUNA — {pair}*\n",
+        f"━━━━━━━━━━━━━━━━━━━━\n",
+        f"💰 Цена сейчас: *{format_price(price)}*  {ce} {chg:+.2f}% за сутки\n\n",
+        f"*{verdict}*\n",
+        f"_{verdict_why}_\n",
+        f"_{conf_txt}_\n\n",
+        f"━━━ Что говорят индикаторы ━━━\n\n",
+        f"🌡 *Термометр монеты (RSI = {rsi})*\n",
+        f"{rsi_verdict}\n",
+        f"_{rsi_action}_\n\n",
+        f"🧭 *Направление движения (MACD)*\n",
+        f"{macd_txt}\n\n",
+        f"📉 *Скользящие средние (MA30 / MA90)*\n",
+        f"{ma_trend}\n",
+        f"_{ma_position}_\n",
+    ]
+    if ma_cross_txt:
+        parts.append(f"{ma_cross_txt}\n")
+    parts.append("\n")
+    if div_block:
+        parts.append(f"🔔 *Дивергенция:*\n{div_block}\n\n")
+    parts += [
+        f"📏 *Тренд (средние цены)*\n",
+        f"{trend_verdict}\n",
+        f"_{trend_explain}_\n\n",
+        f"📐 *Нормальный диапазон цены (Bollinger)*\n",
+        f"Верхняя граница: {format_price(bb['upper'])} | Нижняя: {format_price(bb['lower'])}\n",
+        f"{bb_txt}\n\n",
+        f"━━━ Ключевые уровни цены ━━━\n\n",
+        f"🟢 *Поддержка: {sup_txt}*\n",
+        f"_Здесь цена много раз останавливалась и отскакивала вверх — зона интереса покупателей_\n\n",
+        f"🔴 *Сопротивление: {res_txt}*\n",
+        f"_Здесь цена много раз тормозила — зона где продавцы активны_\n\n",
+        f"━━━ План сделки ━━━\n\n",
+        f"▶️ Купить по: *{format_price(entry)}*\n\n",
+        f"🛡 Стоп-лосс: *{format_price(sl)}* ({sl_pct:+.1f}%)\n",
+        f"_Если цена упадёт до этой отметки — продай. Это защита от большого убытка_\n\n",
+        f"🎯 Цель 1: *{format_price(tp1)}* ({tp1_pct:+.1f}%)\n",
+        f"_Когда цена дойдёт сюда — продай половину и зафикси первую прибыль_\n\n",
+        f"🎯 Цель 2: *{format_price(tp2)}* ({tp2_pct:+.1f}%)\n",
+        f"_Если рост продолжится — продай остаток здесь_\n\n",
+        f"━━━ Считаем для твоего бюджета ━━━\n\n",
+        f"💵 Вкладываешь: *${invest:.0f}* из ${budget_usd:.0f}\n",
+        f"🏦 Резерв: *${reserve:.0f}* держи в USDT на бирже — не трогай\n",
+        f"🪙 Купишь: *{qty:.4f} {sym}*\n\n",
+        f"При Цели 1 заработаешь: *+${tp1_usd:.2f}* (≈ +{tp1_usd*usd_to_rub:.0f} ₽)\n",
+        f"При Цели 2 заработаешь: *+${tp2_usd:.2f}* (≈ +{tp2_usd*usd_to_rub:.0f} ₽)\n",
+        f"Если сработает стоп-лосс: *{sl_usd:.2f}$* (≈ {sl_usd*usd_to_rub:.0f} ₽)\n\n",
+        f"⚠️ _Это анализ, не финансовый совет. Крипто — высокий риск._",
+    ]
+    msg = "".join(parts)
     return msg
 
 def format_prices_msg(prices: dict) -> str:
