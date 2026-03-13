@@ -18,6 +18,26 @@ from telegram.ext import (
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "ВСТАВЬ_ТОКЕН_СЮДА")
 API_URL   = "https://luna-crypto-api.onrender.com"
 
+# ── ЗАЩИТА: только твой Telegram ID ──────────────────────────────────────────
+# Узнай свой ID: напиши боту @userinfobot в Telegram
+OWNER_ID = int(os.environ.get("OWNER_ID", "0"))  # вставь свой ID на Render
+
+# ── ХРАНИЛИЩЕ БЮДЖЕТА (в памяти) ─────────────────────────────────────────────
+user_budgets = {}  # {user_id: float}
+DEFAULT_BUDGET = 22.0
+
+def get_budget(user_id: int) -> float:
+    return user_budgets.get(user_id, DEFAULT_BUDGET)
+
+def set_budget(user_id: int, amount: float):
+    user_budgets[user_id] = amount
+
+# ── ПРОВЕРКА ДОСТУПА ──────────────────────────────────────────────────────────
+def is_allowed(update: Update) -> bool:
+    if OWNER_ID == 0:
+        return True  # если ID не задан — пускаем всех (для теста)
+    return update.effective_user.id == OWNER_ID
+
 # Твой список избранных монет
 FAVE_COINS = ["ETH","SOL","XRP","ADA","LTC","LINK","ATOM","BCH","NEAR","ICP","TON","HYPE"]
 
@@ -33,6 +53,23 @@ INTERVALS = {
     "1ч":  "60",
     "4ч":  "240",
     "1д":  "D",
+    "1н":  "W",
+}
+
+INTERVAL_DESC = {
+    "15": "⚡ 15 минут — скальпинг (сделка на 1-4 часа)",
+    "60": "🕐 1 час — дневная торговля (сделка на 1-3 дня)",
+    "240": "🕓 4 часа — среднесрочно (сделка на 3-14 дней)",
+    "D":  "📅 1 день — долгосрочно (держать недели/месяцы)",
+    "W":  "📆 1 неделя — инвестиция (держать месяцы/год)",
+}
+
+INTERVAL_ADVICE = {
+    "15": "Это быстрая торговля. Следи за сделкой — она может закрыться за пару часов. Подходит если сидишь у экрана.",
+    "60": "Хороший баланс — не надо смотреть каждую минуту. Проверяй раз в несколько часов.",
+    "240": "Спокойная торговля. Открыл сделку и проверяешь раз в день. Меньше стресса.",
+    "D":  "Долгосрочная позиция. Купил и ждёшь несколько недель. Стоп-лосс широкий — небольшие колебания не страшны.",
+    "W":  "Инвестиция на месяцы. Купил и забыл на время. Подходит если веришь в рост монеты.",
 }
 
 # ── ПОЛУЧЕНИЕ ДАННЫХ С СЕРВЕРА ───────────────────────────────────────────────
@@ -43,6 +80,29 @@ async def get_analysis(symbol: str, interval: str = "60") -> dict | None:
             return r.json()
     except Exception as e:
         print(f"API error: {e}")
+        return None
+
+async def get_multi_analysis(symbol: str) -> dict:
+    """Получает анализ по всем ключевым таймфреймам параллельно"""
+    timeframes = ["15", "60", "240", "D"]
+    async def fetch(iv):
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                r = await client.get(f"{API_URL}/analyze/{symbol}?interval={iv}")
+                return iv, r.json()
+        except:
+            return iv, None
+    results = await asyncio.gather(*[fetch(iv) for iv in timeframes])
+    return {iv: data for iv, data in results if data and "signal" in data}
+
+async def get_history(symbol: str) -> dict | None:
+    """Получает исторические данные: динамика, тренды, максимумы"""
+    try:
+        async with httpx.AsyncClient(timeout=25) as client:
+            r = await client.get(f"{API_URL}/history/{symbol}")
+            return r.json()
+    except Exception as e:
+        print(f"History error: {e}")
         return None
 
 async def get_prices(symbols: list) -> dict:
@@ -68,6 +128,234 @@ def format_price(price: float) -> str:
     else:
         return f"${price:.5f}"
 
+def format_history(symbol: str, h: dict) -> str:
+    if not h:
+        return ""
+
+    lines = []
+    pc = h.get("price_changes", {})
+    trends = h.get("trends", {})
+
+    # Динамика цены
+    def fmt_pct(val):
+        if val is None: return "нет данных"
+        icon = "📈" if val > 0 else ("📉" if val < 0 else "➡️")
+        return f"{icon} {val:+.2f}%"
+
+    lines.append("📊 *Динамика цены:*")
+    lines.append(f"• За 24 часа:   {fmt_pct(pc.get('24h'))}")
+    lines.append(f"• За 7 дней:    {fmt_pct(pc.get('7d'))}")
+    lines.append(f"• За 30 дней:   {fmt_pct(pc.get('30d'))}")
+    lines.append(f"• За 3 месяца:  {fmt_pct(pc.get('90d'))}")
+    lines.append(f"• За год:       {fmt_pct(pc.get('365d'))}")
+    lines.append("")
+
+    # Тренды
+    lines.append("🔍 *Тренды:*")
+    if trends.get("3d"):  lines.append(f"• 3 дня:    {trends['3d']}")
+    if trends.get("7d"):  lines.append(f"• 7 дней:   {trends['7d']}")
+    if trends.get("30d"): lines.append(f"• 30 дней:  {trends['30d']}")
+    if trends.get("90d"): lines.append(f"• 90 дней:  {trends['90d']}")
+    lines.append("")
+
+    # Серия дней
+    if h.get("streak"):
+        lines.append(f"⏱ *Серия:* {h['streak']}")
+
+    # Объём
+    if h.get("volume_signal"):
+        lines.append(f"📦 *Объём:* {h['volume_signal']}")
+    lines.append("")
+
+    # Максимум/минимум за год
+    yh = h.get("year_high")
+    yl = h.get("year_low")
+    fh = h.get("from_high_pct")
+    fl = h.get("from_low_pct")
+    if yh and yl:
+        lines.append("📅 *За последний год:*")
+        lines.append(f"• Максимум: *{format_price(yh)}*  (сейчас {fh:+.1f}% от пика)")
+        lines.append(f"• Минимум:  *{format_price(yl)}*  (сейчас {fl:+.1f}% от дна)")
+
+    return "\n".join(lines)
+
+
+def signal_short(sig: str, conf: int) -> str:
+    icons = {"BUY": "🟢", "SELL": "🔴", "HOLD": "🟡"}
+    labels = {"BUY": "ПОКУПАТЬ", "SELL": "ПРОДАВАТЬ", "HOLD": "ЖДАТЬ"}
+    return f"{icons.get(sig,'⚪')} {labels.get(sig,'?')} ({conf}%)"
+
+def format_multi_analysis(symbol: str, all_data: dict, budget_usd: float = 22.0) -> str:
+    usd_to_rub = 90
+
+    if not all_data:
+        return f"⚠️ Не удалось получить данные по {symbol}"
+
+    first = next(iter(all_data.values()))
+    price = first["price"]
+    chg   = first["change_24h"]
+    ce    = change_emoji(chg)
+
+    lines_out = [
+        f"🔮 *LUNA — Полный анализ {symbol}/USDT*",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"💰 Цена сейчас: *{format_price(price)}*  {ce} {chg:+.2f}% за сутки",
+        "",
+        "━━━ Взгляд с разных периодов ━━━",
+        "",
+        "_Каждый период — это отдельный взгляд на монету._",
+        "_15 минут — для быстрой сделки на пару часов._",
+        "_1 час — для сделки на 1–3 дня._",
+        "_4 часа — для сделки на неделю._",
+        "_1 день — для долгосрочного вложения на месяц+._",
+        "",
+    ]
+
+    tf_meta = {
+        "15":  ("⚡ 15 минут", "быстрая сделка, 1–4 часа"),
+        "60":  ("🕐 1 час",    "дневная торговля, 1–3 дня"),
+        "240": ("🕓 4 часа",   "среднесрочно, 1–2 недели"),
+        "D":   ("📅 1 день",   "долгосрочно, месяц+"),
+    }
+
+    buy_count = sell_count = hold_count = 0
+
+    for iv in ["15", "60", "240", "D"]:
+        if iv not in all_data:
+            continue
+        d    = all_data[iv]
+        sig  = d["signal"]["signal"]
+        conf = d["signal"]["confidence"]
+        rsi  = d["indicators"]["rsi"]
+        macd = d["indicators"]["macd"]["cross"]
+        ema50  = d["indicators"]["ema50"]
+        ema200 = d["indicators"]["ema200"]
+        name, use = tf_meta.get(iv, (iv, ""))
+
+        # Сигнал
+        sig_icons  = {"BUY": "🟢", "SELL": "🔴", "HOLD": "🟡"}
+        sig_labels = {"BUY": "ПОКУПАТЬ", "SELL": "НЕ ПОКУПАТЬ", "HOLD": "ПОДОЖДАТЬ"}
+        sig_icon  = sig_icons.get(sig, "⚪")
+        sig_label = sig_labels.get(sig, "?")
+
+        # RSI коротко
+        if rsi < 30:   rsi_short = f"RSI {rsi} — очень дёшево 🔵"
+        elif rsi < 45: rsi_short = f"RSI {rsi} — немного дёшево 🟡"
+        elif rsi < 55: rsi_short = f"RSI {rsi} — в норме ⚪"
+        elif rsi < 70: rsi_short = f"RSI {rsi} — немного дорого 🟠"
+        else:          rsi_short = f"RSI {rsi} — перегрета 🔴"
+
+        # Тренд коротко
+        if price > ema50 > ema200:    trend_short = "тренд вверх 📈"
+        elif price < ema50 < ema200:  trend_short = "тренд вниз 📉"
+        elif price > ema50:           trend_short = "слабый рост ↗️"
+        else:                         trend_short = "слабое падение ↘️"
+
+        macd_short = "импульс вверх 🟢" if macd == "bullish" else "импульс вниз 🔴"
+
+        lines_out.append(f"*{name}* ({use})")
+        lines_out.append(f"  {sig_icon} *{sig_label}* — уверенность {conf}%")
+        lines_out.append(f"  • {rsi_short}")
+        lines_out.append(f"  • MACD: {macd_short}")
+        lines_out.append(f"  • {trend_short}")
+        lines_out.append("")
+
+        if sig == "BUY":   buy_count  += 1
+        elif sig == "SELL": sell_count += 1
+        else:               hold_count += 1
+
+    # Общий вывод
+    total = buy_count + sell_count + hold_count
+    lines_out.append("━━━ Общий вывод ━━━")
+    lines_out.append("")
+    if buy_count >= 3:
+        lines_out.append(f"🟢 *СИЛЬНЫЙ СИГНАЛ К ПОКУПКЕ*")
+        lines_out.append(f"_{buy_count} из {total} периодов говорят покупать — хорошее совпадение_")
+    elif buy_count == 2:
+        lines_out.append(f"🟢 *МОЖНО РАССМОТРЕТЬ ПОКУПКУ*")
+        lines_out.append(f"_Половина периодов ({buy_count}/{total}) за покупку — умеренный сигнал_")
+    elif sell_count >= 3:
+        lines_out.append(f"🔴 *НЕ ПОКУПАТЬ СЕЙЧАС*")
+        lines_out.append(f"_{sell_count} из {total} периодов против — высокий риск потери_")
+    elif sell_count == 2:
+        lines_out.append(f"🟡 *ЛУЧШЕ ПОДОЖДАТЬ*")
+        lines_out.append(f"_Сигналы смешанные — нет уверенности в направлении_")
+    else:
+        lines_out.append(f"🟡 *НЕЙТРАЛЬНО — НАБЛЮДАТЬ*")
+        lines_out.append(f"_Рынок в нерешительности. Подожди чёткого сигнала_")
+    lines_out.append("")
+
+    # Детальный план по 1ч
+    if "60" in all_data:
+        d1h = all_data["60"]
+        trd = d1h["trade"]
+        lvl = d1h["levels"]
+        sig1h = d1h["signal"]["signal"]
+        entry = trd["entry"]
+
+        if sig1h == "BUY":
+            sl  = min(trd["stop_loss"], entry * 0.97)
+            tp1 = max(trd["tp1"], entry * 1.02)
+            tp2 = max(trd["tp2"], entry * 1.04)
+        else:
+            sl  = max(trd["stop_loss"], entry * 1.03)
+            tp1 = min(trd["tp1"], entry * 0.97)
+            tp2 = min(trd["tp2"], entry * 0.94)
+
+        sl_pct  = round((sl  - entry) / entry * 100, 1)
+        tp1_pct = round((tp1 - entry) / entry * 100, 1)
+        tp2_pct = round((tp2 - entry) / entry * 100, 1)
+
+        invest  = round(min(budget_usd * 0.7, budget_usd - 5), 0)
+        reserve = budget_usd - invest
+        qty     = invest / price if price > 0 else 0
+        tp1_usd = qty * (tp1 - entry)
+        tp2_usd = qty * (tp2 - entry)
+        sl_usd  = qty * (sl  - entry)
+
+        lines_out += [
+            "━━━ План сделки (на основе 1 часа) ━━━",
+            "",
+            f"▶️ Купить по: *{format_price(entry)}*",
+            "",
+            f"🛡 Стоп-лосс: *{format_price(sl)}* ({sl_pct:+.1f}%)",
+            "_Если цена упадёт сюда — продай. Это защита от большого убытка_",
+            "",
+            f"🎯 Цель 1: *{format_price(tp1)}* ({tp1_pct:+.1f}%)",
+            "_Дойдёт сюда — продай половину, зафикси первую прибыль_",
+            "",
+            f"🎯 Цель 2: *{format_price(tp2)}* ({tp2_pct:+.1f}%)",
+            "_Если рост продолжится — продай остаток здесь_",
+            "",
+            "━━━ Считаем для твоего бюджета ━━━",
+            "",
+            f"💵 Вкладываешь: *${invest:.0f}* из ${budget_usd:.0f}",
+            f"🏦 Резерв: *${reserve:.0f}* держи в USDT — не трогай",
+            f"🪙 Купишь: *{qty:.4f} {symbol}*",
+            "",
+            f"При Цели 1 заработаешь: *+${tp1_usd:.2f}* (≈ +{tp1_usd*usd_to_rub:.0f} ₽)",
+            f"При Цели 2 заработаешь: *+${tp2_usd:.2f}* (≈ +{tp2_usd*usd_to_rub:.0f} ₽)",
+            f"Если сработает стоп-лосс: *{sl_usd:.2f}$* (≈ {sl_usd*usd_to_rub:.0f} ₽)",
+            "",
+        ]
+
+        # Уровни
+        sup = lvl.get("support", [])
+        res = lvl.get("resistance", [])
+        if sup or res:
+            lines_out.append("━━━ Ключевые уровни цены ━━━")
+            lines_out.append("")
+            if sup:
+                lines_out.append(f"🟢 *Поддержка: {' / '.join([format_price(s) for s in sup])}*")
+                lines_out.append("_Здесь цена часто останавливается и растёт обратно_")
+            if res:
+                lines_out.append(f"🔴 *Сопротивление: {' / '.join([format_price(r) for r in res])}*")
+                lines_out.append("_Здесь цена часто тормозит — зона активных продаж_")
+            lines_out.append("")
+
+    lines_out.append("⚠️ _Это анализ, не финансовый совет. Крипто — высокий риск._")
+    return "\n".join(lines_out)
+
 def format_analysis(data: dict, budget_usd: float = 22.0) -> str:
     sym   = data["symbol"]
     pair  = data["pair"]
@@ -80,76 +368,97 @@ def format_analysis(data: dict, budget_usd: float = 22.0) -> str:
     ce    = change_emoji(chg)
     usd_to_rub = 90
 
-    # Главный вывод простым языком
+    # ── ГЛАВНЫЙ ВЫВОД ────────────────────────────────────────
     if sig["signal"] == "BUY":
-        main_verdict = "🟢 *МОЖНО ПОКУПАТЬ*"
-        main_explain = "Индикаторы показывают хороший момент для входа"
+        verdict      = "🟢 МОЖНО ПОКУПАТЬ"
+        verdict_why  = "Большинство индикаторов показывают хороший момент для входа"
     elif sig["signal"] == "SELL":
-        main_verdict = "🔴 *ЛУЧШЕ НЕ ПОКУПАТЬ*"
-        main_explain = "Сейчас не лучший момент — цена может упасть"
+        verdict      = "🔴 НЕ ПОКУПАТЬ"
+        verdict_why  = "Сейчас плохой момент — цена скорее всего продолжит падать"
     else:
-        main_verdict = "🟡 *ПОДОЖДАТЬ*"
-        main_explain = "Непонятная ситуация — лучше понаблюдать ещё"
+        verdict      = "🟡 ПОДОЖДАТЬ"
+        verdict_why  = "Нет чёткого сигнала — рынок в нерешительности, лучше понаблюдать"
 
-    # RSI простым языком
+    conf = sig["confidence"]
+    if conf >= 75:
+        conf_txt = f"Уверенность: {conf}% — сигнал сильный"
+    elif conf >= 55:
+        conf_txt = f"Уверенность: {conf}% — сигнал умеренный"
+    else:
+        conf_txt = f"Уверенность: {conf}% — сигнал слабый, осторожно"
+
+    # ── ТЕРМОМЕТР (RSI) ────────────────────────────────────────
     rsi = ind["rsi"]
     if rsi < 30:
-        rsi_txt = f"RSI={rsi} — монета сильно подешевела, возможен отскок вверх 🔵"
+        rsi_verdict = "🔵 Очень дёшево"
+        rsi_action  = "Монета сильно упала — исторически хороший момент для покупки"
     elif rsi < 45:
-        rsi_txt = f"RSI={rsi} — монета немного дешёвая, нейтрально 🟡"
+        rsi_verdict = "🟡 Немного дёшево"
+        rsi_action  = "Цена чуть ниже нормы — неплохой момент для входа"
     elif rsi < 55:
-        rsi_txt = f"RSI={rsi} — монета в норме, без перегрева ⚪"
+        rsi_verdict = "⚪ В норме"
+        rsi_action  = "Цена в нейтральной зоне, без перегрева"
     elif rsi < 70:
-        rsi_txt = f"RSI={rsi} — монета немного дорогая, осторожно 🟠"
+        rsi_verdict = "🟠 Немного дорого"
+        rsi_action  = "Монета немного выросла — возможна небольшая коррекция"
     else:
-        rsi_txt = f"RSI={rsi} — монета перегрета после роста, риск отката 🔴"
+        rsi_verdict = "🔴 Перегрета"
+        rsi_action  = "Монета сильно выросла — высокий риск отката вниз"
 
-    # MACD
+    # ── НАПРАВЛЕНИЕ ДВИЖЕНИЯ (MACD) ──────────────────────────
     macd = ind["macd"]
-    macd_txt = "сигнал роста 📈" if macd["cross"] == "bullish" else "сигнал снижения 📉"
+    if macd["cross"] == "bullish":
+        macd_txt = "🟢 Импульс вверх — скорость роста ускоряется"
+    else:
+        macd_txt = "🔴 Импульс вниз — скорость падения ускоряется"
 
-    # Тренд
+    # ── ТРЕНД (EMA) ───────────────────────────────────────────
     ema50, ema200 = ind["ema50"], ind["ema200"]
     if price > ema50 > ema200:
-        trend_txt = "уверенный рост 📈 — монета растёт уже несколько недель"
+        trend_verdict = "📈 Устойчивый рост"
+        trend_explain = f"Цена ${format_price(price)} выше средней за 2 дня (${format_price(ema50)}) и за 8 дней (${format_price(ema200)}) — монета уверенно растёт"
     elif price < ema50 < ema200:
-        trend_txt = "падение 📉 — покупать рискованно"
+        trend_verdict = "📉 Устойчивое падение"
+        trend_explain = f"Цена ${format_price(price)} ниже средней за 2 дня (${format_price(ema50)}) и за 8 дней (${format_price(ema200)}) — монета уверенно падает"
     elif price > ema50:
-        trend_txt = "слабый рост ↗️ — подъём неустойчивый"
+        trend_verdict = "↗️ Слабый рост"
+        trend_explain = f"Цена выше средней за 2 дня, но ниже за 8 дней — краткосрочный подъём, тренд неустойчив"
     else:
-        trend_txt = "небольшая коррекция ↘️"
+        trend_verdict = "↘️ Слабое падение"
+        trend_explain = f"Цена ниже средней за 2 дня — небольшая коррекция"
 
-    # Bollinger
-    bb_pos = round(ind["bollinger"]["position"] * 100)
+    # ── ДИАПАЗОН (BOLLINGER) ───────────────────────────────────
+    bb = ind["bollinger"]
+    bb_pos = round(bb["position"] * 100)
     if bb_pos < 20:
-        bb_txt = f"цена у нижней границы — возможен отскок вверх"
+        bb_txt = f"📍 Цена у нижней границы нормального диапазона ({bb_pos}%) — часто означает отскок вверх"
     elif bb_pos > 80:
-        bb_txt = f"цена у верхней границы — возможна коррекция вниз"
+        bb_txt = f"📍 Цена у верхней границы нормального диапазона ({bb_pos}%) — часто означает коррекцию вниз"
     else:
-        bb_txt = f"цена в середине диапазона — нейтрально"
+        bb_txt = f"📍 Цена в середине нормального диапазона ({bb_pos}%) — нейтрально"
 
-    # Уровни
-    sup = lvl["support"]
-    res = lvl["resistance"]
-    sup_txt = " и ".join([format_price(s) for s in sup]) if sup else "не определена"
-    res_txt = " и ".join([format_price(r) for r in res]) if res else "не определено"
+    # ── УРОВНИ ───────────────────────────────────────────────
+    sup = lvl.get("support", [])
+    res = lvl.get("resistance", [])
+    sup_txt = " и ".join([format_price(s) for s in sup]) if sup else "не найдена"
+    res_txt = " и ".join([format_price(r) for r in res]) if res else "не найдено"
 
-    # Уровни сделки — исправляем логику для BUY
+    # ── ПЛАН СДЕЛКИ (с исправлением направления) ─────────────
     entry = trd["entry"]
     if sig["signal"] == "BUY":
-        sl  = min(trd["stop_loss"], entry * 0.97)   # SL всегда НИЖЕ цены
-        tp1 = max(trd["tp1"], entry * 1.02)          # TP1 всегда ВЫШЕ цены
-        tp2 = max(trd["tp2"], entry * 1.04)          # TP2 ещё выше
+        sl  = min(trd["stop_loss"], entry * 0.97)
+        tp1 = max(trd["tp1"], entry * 1.02)
+        tp2 = max(trd["tp2"], entry * 1.04)
     else:
         sl  = max(trd["stop_loss"], entry * 1.03)
-        tp1 = min(trd["tp1"],  entry * 0.97)
-        tp2 = min(trd["tp2"],  entry * 0.94)
+        tp1 = min(trd["tp1"], entry * 0.97)
+        tp2 = min(trd["tp2"], entry * 0.94)
 
     sl_pct  = round((sl  - entry) / entry * 100, 1)
     tp1_pct = round((tp1 - entry) / entry * 100, 1)
     tp2_pct = round((tp2 - entry) / entry * 100, 1)
 
-    # Расчёт денег
+    # ── ДЕНЬГИ ────────────────────────────────────────────────
     invest  = round(min(budget_usd * 0.7, budget_usd - 5), 0)
     reserve = budget_usd - invest
     qty     = invest / price if price > 0 else 0
@@ -161,27 +470,50 @@ def format_analysis(data: dict, budget_usd: float = 22.0) -> str:
         f"🔮 *LUNA — {pair}*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"💰 Цена сейчас: *{format_price(price)}*  {ce} {chg:+.2f}% за сутки\n\n"
-        f"{main_verdict}\n"
-        f"_{main_explain}_\n\n"
-        f"📊 *Что говорят индикаторы:*\n"
-        f"• {rsi_txt}\n"
-        f"• MACD — {macd_txt}\n"
-        f"• Тренд — {trend_txt}\n"
-        f"• Диапазон — {bb_txt}\n\n"
-        f"📍 *Ключевые уровни:*\n"
-        f"• Поддержка {sup_txt} — здесь цена обычно отскакивает вверх\n"
-        f"• Сопротивление {res_txt} — здесь цена обычно тормозит\n\n"
-        f"🎯 *План сделки:*\n"
-        f"• Купить по: *{format_price(entry)}*\n"
-        f"• Стоп-лосс: *{format_price(sl)}* ({sl_pct:+.1f}%) — если цена упадёт сюда, продай чтобы не потерять больше\n"
-        f"• Цель 1: *{format_price(tp1)}* ({tp1_pct:+.1f}%) — продай половину и зафикси прибыль\n"
-        f"• Цель 2: *{format_price(tp2)}* ({tp2_pct:+.1f}%) — если рост продолжится, продай остаток\n\n"
-        f"💵 *Считаем для твоих ${invest:.0f}:*\n"
-        f"• Купишь: {qty:.4f} {sym}\n"
-        f"• Прибыль при Цели 1: *+${tp1_usd:.2f}* (≈ +{tp1_usd*usd_to_rub:.0f} ₽)\n"
-        f"• Прибыль при Цели 2: *+${tp2_usd:.2f}* (≈ +{tp2_usd*usd_to_rub:.0f} ₽)\n"
-        f"• Максимальный убыток: *{sl_usd:.2f}$* (≈ {sl_usd*usd_to_rub:.0f} ₽)\n"
-        f"• Оставь ${reserve:.0f} в USDT — это твой резерв\n\n"
+
+        f"*{verdict}*\n"
+        f"_{verdict_why}_\n"
+        f"_{conf_txt}_\n\n"
+
+        f"━━━ Что говорят индикаторы ━━━\n\n"
+
+        f"🌡 *Термометр монеты (RSI = {rsi})*\n"
+        f"{rsi_verdict}\n"
+        f"_{rsi_action}_\n\n"
+
+        f"🧭 *Направление движения (MACD)*\n"
+        f"{macd_txt}\n\n"
+
+        f"📏 *Тренд (средние цены)*\n"
+        f"{trend_verdict}\n"
+        f"_{trend_explain}_\n\n"
+
+        f"📐 *Нормальный диапазон цены (Bollinger)*\n"
+        f"Верхняя граница: {format_price(bb['upper'])} | Нижняя: {format_price(bb['lower'])}\n"
+        f"{bb_txt}\n\n"
+
+        f"━━━ Ключевые уровни цены ━━━\n\n"
+        f"🟢 *Поддержка: {sup_txt}*\n"
+        f"_Здесь цена много раз останавливалась и отскакивала вверх — зона интереса покупателей_\n\n"
+        f"🔴 *Сопротивление: {res_txt}*\n"
+        f"_Здесь цена много раз тормозила — зона где продавцы активны_\n\n"
+
+        f"━━━ План сделки ━━━\n\n"
+        f"▶️ Купить по: *{format_price(entry)}*\n\n"
+        f"🛡 Стоп-лосс: *{format_price(sl)}* ({sl_pct:+.1f}%)\n"
+        f"_Если цена упадёт до этой отметки — продай. Это защита от большого убытка_\n\n"
+        f"🎯 Цель 1: *{format_price(tp1)}* ({tp1_pct:+.1f}%)\n"
+        f"_Когда цена дойдёт сюда — продай половину и зафикси первую прибыль_\n\n"
+        f"🎯 Цель 2: *{format_price(tp2)}* ({tp2_pct:+.1f}%)\n"
+        f"_Если рост продолжится — продай остаток здесь_\n\n"
+
+        f"━━━ Считаем для твоего бюджета ━━━\n\n"
+        f"💵 Вкладываешь: *${invest:.0f}* из ${budget_usd:.0f}\n"
+        f"🏦 Резерв: *${reserve:.0f}* держи в USDT на бирже — не трогай\n"
+        f"🪙 Купишь: *{qty:.4f} {sym}*\n\n"
+        f"При Цели 1 заработаешь: *+${tp1_usd:.2f}* (≈ +{tp1_usd*usd_to_rub:.0f} ₽)\n"
+        f"При Цели 2 заработаешь: *+${tp2_usd:.2f}* (≈ +{tp2_usd*usd_to_rub:.0f} ₽)\n"
+        f"Если сработает стоп-лосс: *{sl_usd:.2f}$* (≈ {sl_usd*usd_to_rub:.0f} ₽)\n\n"
         f"⚠️ _Это анализ, не финансовый совет. Крипто — высокий риск._"
     )
     return msg
@@ -203,7 +535,20 @@ def main_keyboard():
          InlineKeyboardButton("⚡ Альткоины",        callback_data="group_alt")],
         [InlineKeyboardButton("🆕 Новинки",          callback_data="group_new")],
         [InlineKeyboardButton("💹 Цены топ-5",       callback_data="prices_top"),
-         InlineKeyboardButton("❓ Помощь",            callback_data="help")],
+         InlineKeyboardButton("💵 Мой бюджет",       callback_data="budget_menu")],
+        [InlineKeyboardButton("❓ Помощь",            callback_data="help")],
+    ])
+
+def budget_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("$10",  callback_data="budget_set_10"),
+         InlineKeyboardButton("$22",  callback_data="budget_set_22"),
+         InlineKeyboardButton("$50",  callback_data="budget_set_50")],
+        [InlineKeyboardButton("$100", callback_data="budget_set_100"),
+         InlineKeyboardButton("$200", callback_data="budget_set_200"),
+         InlineKeyboardButton("$500", callback_data="budget_set_500")],
+        [InlineKeyboardButton("✏️ Ввести вручную", callback_data="budget_custom")],
+        [InlineKeyboardButton("◀️ Назад",           callback_data="back_main")],
     ])
 
 def coin_keyboard(group_key: str):
@@ -224,35 +569,44 @@ def interval_keyboard(coin: str):
     row = [InlineKeyboardButton(label, callback_data=f"analyze_{coin}_{iv}")
            for label, iv in INTERVALS.items()]
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔍 Все таймфреймы сразу", callback_data=f"multianalyze_{coin}")],
         row,
         [InlineKeyboardButton("◀️ Назад", callback_data="back_main")]
     ])
 
 def after_analysis_keyboard(coin: str):
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(f"🔄 Обновить {coin}", callback_data=f"analyze_{coin}_60"),
-         InlineKeyboardButton("📊 4ч таймфрейм",    callback_data=f"analyze_{coin}_240")],
-        [InlineKeyboardButton("📋 Другая монета",   callback_data="back_main"),
-         InlineKeyboardButton("💹 Все цены",        callback_data="prices_fave")],
+        [InlineKeyboardButton("🔍 Все таймфреймы + история", callback_data=f"multianalyze_{coin}")],
+        [InlineKeyboardButton("⚡ 15м", callback_data=f"analyze_{coin}_15"),
+         InlineKeyboardButton("🕐 1ч",  callback_data=f"analyze_{coin}_60"),
+         InlineKeyboardButton("🕓 4ч",  callback_data=f"analyze_{coin}_240"),
+         InlineKeyboardButton("📅 1д",  callback_data=f"analyze_{coin}_D")],
+        [InlineKeyboardButton("📋 Другая монета", callback_data="back_main"),
+         InlineKeyboardButton("💹 Все цены",      callback_data="prices_fave")],
     ])
 
 
 # ── ХЭНДЛЕРЫ ─────────────────────────────────────────────────────────────────
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update):
+        await update.message.reply_text("⛔ Доступ закрыт.")
+        return
     name = update.effective_user.first_name or "трейдер"
-    text = f"""🔮 *Привет, {name}!*
-
-Я *LUNA* — твой персональный аналитик крипторынка на Bybit.
-
-Получаю *реальные данные* прямо с биржи и считаю:
-📊 RSI, MACD, EMA50/200, Bollinger Bands
-🎯 Точку входа, стоп-лосс и тейк-профит
-💰 Прибыль под твой бюджет в рублях
-
-Выбери монету для анализа 👇"""
+    budget = get_budget(update.effective_user.id)
+    text = (
+        f"🔮 *Привет, {name}!*\n\n"
+        f"Я *LUNA* — твой персональный аналитик крипторынка на Bybit.\n\n"
+        f"Получаю *реальные данные* прямо с биржи и считаю:\n"
+        f"📊 RSI, MACD, EMA50/200, Bollinger Bands\n"
+        f"🎯 Точку входа, стоп-лосс и тейк-профит\n"
+        f"💰 Прибыль под твой бюджет в рублях\n\n"
+        f"💵 Текущий бюджет: *${budget:.0f}*\n\n"
+        f"Выбери монету для анализа 👇"
+    )
     await update.message.reply_text(text, parse_mode="Markdown", reply_markup=main_keyboard())
 
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update): return
     text = """📖 *Команды LUNA:*
 
 /start — главное меню
@@ -274,6 +628,7 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown", reply_markup=main_keyboard())
 
 async def cmd_analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update): return
     args = ctx.args
     if not args:
         await update.message.reply_text("Укажи монету. Пример: /analyze ETH")
@@ -283,6 +638,7 @@ async def cmd_analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await do_analysis(update, ctx, coin, interval)
 
 async def cmd_prices(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update): return
     msg = await update.message.reply_text("⏳ Загружаю цены с Bybit...")
     prices = await get_prices(["BTC","ETH","SOL","XRP","BNB","ADA","TON","DOGE"])
     if prices:
@@ -291,6 +647,7 @@ async def cmd_prices(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await msg.edit_text("⚠️ Не удалось получить цены. Попробуй позже.")
 
 async def cmd_fave(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update): return
     msg = await update.message.reply_text("⏳ Загружаю цены твоих монет...")
     prices = await get_prices(FAVE_COINS[:8])
     if prices:
@@ -302,8 +659,51 @@ async def cmd_fave(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     else:
         await msg.edit_text("⚠️ Ошибка загрузки.", reply_markup=main_keyboard())
 
+async def do_multi_analysis(update: Update, ctx: ContextTypes.DEFAULT_TYPE, coin: str):
+    """Анализ по всем таймфреймам сразу"""
+    if not is_allowed(update):
+        return
+    uid = update.effective_user.id
+    budget = get_budget(uid)
+
+    if update.message:
+        msg = await update.message.reply_text(f"⏳ Анализирую {coin}/USDT по всем таймфреймам...")
+    else:
+        msg = await update.callback_query.message.reply_text(f"⏳ Анализирую {coin}/USDT по всем таймфреймам...")
+
+    all_data, hist = await asyncio.gather(
+        get_multi_analysis(coin),
+        get_history(coin)
+    )
+
+    if not all_data:
+        await msg.edit_text(f"⚠️ Не удалось получить данные по {coin}.")
+        return
+
+    main_text = format_multi_analysis(coin, all_data, budget_usd=budget)
+    hist_text = format_history(coin, hist) if hist else ""
+
+    # Вставляем историю между сигналами и планом сделки
+    if hist_text:
+        # Найдём место после сводной таблицы сигналов
+        split_marker = "🎯 *План сделки"
+        if split_marker in main_text:
+            parts = main_text.split(split_marker, 1)
+            text = parts[0] + hist_text + "\n\n" + split_marker + parts[1]
+        else:
+            text = main_text + "\n\n" + hist_text
+    else:
+        text = main_text
+
+    await msg.edit_text(text, parse_mode="Markdown", reply_markup=after_analysis_keyboard(coin))
+
+
 async def do_analysis(update: Update, ctx: ContextTypes.DEFAULT_TYPE, coin: str, interval: str):
-    # Определяем куда слать — в сообщение или callback
+    if not is_allowed(update):
+        return
+    uid = update.effective_user.id
+    budget = get_budget(uid)
+
     if update.message:
         msg = await update.message.reply_text(f"⏳ Анализирую {coin}/USDT с Bybit...")
     else:
@@ -316,7 +716,12 @@ async def do_analysis(update: Update, ctx: ContextTypes.DEFAULT_TYPE, coin: str,
         return
 
     iv_label = {v: k for k, v in INTERVALS.items()}.get(interval, interval)
-    text = f"_Таймфрейм: {iv_label} | Данные с Bybit в реальном времени_\n\n" + format_analysis(data)
+    sig_label = {"BUY": "🟢 ПОКУПАТЬ", "SELL": "🔴 ПРОДАВАТЬ", "HOLD": "🟡 ЖДАТЬ"}.get(data["signal"]["signal"], "")
+    header = f"📊 *АНАЛИЗ* | {iv_label} | Данные с Bybit в реальном времени
+💵 Бюджет: ${budget:.0f}
+
+"
+    text = header + format_analysis(data, budget_usd=budget)
 
     await msg.edit_text(
         text,
@@ -336,6 +741,32 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "📖 Напиши /help для списка всех команд.",
             reply_markup=main_keyboard()
+        )
+
+    elif data == "budget_menu":
+        uid = query.from_user.id
+        budget = get_budget(uid)
+        await query.message.reply_text(
+            f"💵 *Твой бюджет: ${budget:.0f}*\n\nВыбери сумму или введи вручную:",
+            parse_mode="Markdown",
+            reply_markup=budget_keyboard()
+        )
+
+    elif data.startswith("budget_set_"):
+        amount = float(data.replace("budget_set_", ""))
+        uid = query.from_user.id
+        set_budget(uid, amount)
+        await query.message.reply_text(
+            f"✅ Бюджет обновлён: *${amount:.0f}*\n\nТеперь все расчёты будут под эту сумму.",
+            parse_mode="Markdown",
+            reply_markup=main_keyboard()
+        )
+
+    elif data == "budget_custom":
+        ctx.user_data["awaiting_budget"] = True
+        await query.message.reply_text(
+            "✏️ Введи сумму бюджета в долларах (например: *35*):",
+            parse_mode="Markdown"
         )
 
     elif data.startswith("group_"):
@@ -360,6 +791,10 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             reply_markup=interval_keyboard(coin)
         )
 
+    elif data.startswith("multianalyze_"):
+        coin = data.replace("multianalyze_", "")
+        await do_multi_analysis(update, ctx, coin)
+
     elif data.startswith("analyze_"):
         parts = data.split("_")
         coin     = parts[1]
@@ -378,11 +813,37 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await loading.edit_text("⚠️ Ошибка загрузки цен.", reply_markup=main_keyboard())
 
 async def text_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Если пользователь просто написал тикер монеты — анализируем"""
-    text = update.message.text.strip().upper()
-    # Если это похоже на тикер монеты
-    if text.isalpha() and 2 <= len(text) <= 8:
-        await do_analysis(update, ctx, text, "60")
+    if not is_allowed(update):
+        await update.message.reply_text("⛔ Доступ закрыт.")
+        return
+
+    uid = update.effective_user.id
+    text = update.message.text.strip()
+
+    # Обработка ввода бюджета
+    if ctx.user_data.get("awaiting_budget"):
+        ctx.user_data["awaiting_budget"] = False
+        try:
+            amount = float(text.replace("$", "").replace(",", ".").strip())
+            if amount < 1 or amount > 100000:
+                raise ValueError
+            set_budget(uid, amount)
+            await update.message.reply_text(
+                f"✅ Бюджет обновлён: *${amount:.0f}*\n\nТеперь все расчёты будут под эту сумму.",
+                parse_mode="Markdown",
+                reply_markup=main_keyboard()
+            )
+        except:
+            await update.message.reply_text(
+                "⚠️ Неверный формат. Введи число, например: *35*",
+                parse_mode="Markdown"
+            )
+        return
+
+    # Если это тикер монеты
+    upper = text.upper()
+    if upper.isalpha() and 2 <= len(upper) <= 8:
+        await do_analysis(update, ctx, upper, "60")
     else:
         await update.message.reply_text(
             "Напиши тикер монеты (например *ETH*) или используй меню 👇",
