@@ -363,20 +363,10 @@ async def text_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 # ── ЗАПУСК ───────────────────────────────────────────────────────────────────
-async def post_init(app: Application):
-    await app.bot.set_my_commands([
-        BotCommand("start",   "Главное меню"),
-        BotCommand("analyze", "Анализ монеты — /analyze ETH"),
-        BotCommand("prices",  "Текущие цены"),
-        BotCommand("fave",    "Мои монеты"),
-        BotCommand("help",    "Помощь"),
-    ])
-
-def main():
+async def main():
     app = (
         Application.builder()
         .token(BOT_TOKEN)
-        .post_init(post_init)
         .build()
     )
 
@@ -388,8 +378,21 @@ def main():
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
+    await app.bot.set_my_commands([
+        BotCommand("start",   "Главное меню"),
+        BotCommand("analyze", "Анализ монеты — /analyze ETH"),
+        BotCommand("prices",  "Текущие цены"),
+        BotCommand("fave",    "Мои монеты"),
+        BotCommand("help",    "Помощь"),
+    ])
+
     print("🔮 LUNA Bot запущен!")
-    app.run_polling(drop_pending_updates=True)
+    async with app:
+        await app.start()
+        await app.updater.start_polling(drop_pending_updates=True)
+        await asyncio.Event().wait()  # держим бота живым
+        await app.updater.stop()
+        await app.stop()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
