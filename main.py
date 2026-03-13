@@ -212,19 +212,33 @@ def determine_signal(rsi: float, macd: dict, price: float, ema50: float, ema200:
 def calc_trade_levels(price: float, signal: str, atr: float):
     """Рассчитывает уровни входа, стоп-лосса и тейк-профита"""
     if signal == "BUY":
+        # Стоп-лосс ВСЕГДА ниже цены, TP ВСЕГДА выше
         stop_loss = round(price - atr * 1.5, 4)
-        tp1 = round(price + atr * 2, 4)
-        tp2 = round(price + atr * 4, 4)
-        stop_pct = round((stop_loss - price) / price * 100, 2)
-        tp1_pct = round((tp1 - price) / price * 100, 2)
-        tp2_pct = round((tp2 - price) / price * 100, 2)
-    else:
+        tp1       = round(price + atr * 2,   4)
+        tp2       = round(price + atr * 4,   4)
+    elif signal == "SELL":
+        # Шорт: стоп-лосс выше цены, TP ниже
         stop_loss = round(price + atr * 1.5, 4)
-        tp1 = round(price - atr * 2, 4)
-        tp2 = round(price - atr * 4, 4)
-        stop_pct = round((stop_loss - price) / price * 100, 2)
-        tp1_pct = round((tp1 - price) / price * 100, 2)
-        tp2_pct = round((tp2 - price) / price * 100, 2)
+        tp1       = round(price - atr * 2,   4)
+        tp2       = round(price - atr * 4,   4)
+    else:  # HOLD — показываем уровни как для потенциальной покупки
+        stop_loss = round(price - atr * 2,   4)  # широкий стоп 
+        tp1       = round(price + atr * 1.5, 4)
+        tp2       = round(price + atr * 3,   4)
+
+    # Гарантируем правильное направление независимо от ATR
+    if signal in ("BUY", "HOLD"):
+        stop_loss = min(stop_loss, round(price * 0.96, 4))  # SL не выше -4%
+        tp1       = max(tp1,       round(price * 1.02, 4))  # TP1 не ниже +2%
+        tp2       = max(tp2,       round(price * 1.04, 4))  # TP2 не ниже +4%
+    else:
+        stop_loss = max(stop_loss, round(price * 1.03, 4))
+        tp1       = min(tp1,       round(price * 0.97, 4))
+        tp2       = min(tp2,       round(price * 0.94, 4))
+
+    stop_pct = round((stop_loss - price) / price * 100, 2)
+    tp1_pct  = round((tp1  - price) / price * 100, 2)
+    tp2_pct  = round((tp2  - price) / price * 100, 2)
 
     return {
         "entry": round(price, 4),
