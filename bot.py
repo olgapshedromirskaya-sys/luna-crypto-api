@@ -716,9 +716,9 @@ async def do_analysis(update: Update, ctx: ContextTypes.DEFAULT_TYPE, coin: str,
         return
 
     iv_label = {v: k for k, v in INTERVALS.items()}.get(interval, interval)
-    sig_label = {"BUY": "🟢 ПОКУПАТЬ", "SELL": "🔴 ПРОДАВАТЬ", "HOLD": "🟡 ЖДАТЬ"}.get(data["signal"]["signal"], "")
-    header = f"📊 *АНАЛИЗ* | {iv_label} | Данные с Bybit в реальном времени\n💵 Бюджет: ${budget:.0f}\n\n"
-    header = f"АНАЛИЗ | {iv_label} | Данные с Bybit в реальном времени\nБюджет: ${budget:.0f}\n\n"
+    iv_label = {v: k for k, v in INTERVALS.items()}.get(interval, interval)
+    header = f"АНАЛИЗ {coin} | {iv_label} | Bybit | Бюджет: ${budget:.0f}\n\n"
+    text = header + format_analysis(data, budget_usd=budget)
 
     await msg.edit_text(
         text,
