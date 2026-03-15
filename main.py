@@ -336,46 +336,40 @@ def calc_trade_levels(price: float, signal: str, atr: float):
 
 @app.post("/auth/verify")
 async def verify_telegram_auth(payload: dict):
-    """
-    Проверяет Telegram WebApp initData.
-    Возвращает {ok: true} если пользователь = владелец бота.
-    """
+    """Проверяет Telegram WebApp initData. Возвращает ok=true если владелец."""
     init_data = payload.get("initData", "")
+
     if not init_data:
-        return {"ok": False, "reason": "no_data"}
-
-    if not BOT_TOKEN:
-        # Если BOT_TOKEN не задан — fallback: проверяем только user_id
         try:
-            user_id = payload.get("user_id", 0)
-            return {"ok": int(user_id) == OWNER_ID}
+            uid = int(payload.get("user_id", 0))
+            return {"ok": uid == OWNER_ID and OWNER_ID != 0}
         except:
-            return {"ok": False, "reason": "no_token"}
+            return {"ok": False, "reason": "no_data"}
 
-    # Проверяем подпись Telegram WebApp
     try:
-        parsed = {}
-        for part in unquote(init_data).split("&"):
-            if "=" in part:
-                k, v = part.split("=", 1)
-                parsed[k] = v
+        from urllib.parse import parse_qsl
+        params = dict(parse_qsl(init_data, keep_blank_values=True))
+        hash_val = params.pop("hash", "")
+        items = sorted(params.items())
+        data_check = chr(10).join(k + "=" + v for k, v in items)
 
-        hash_val = parsed.pop("hash", "")
-        data_check = "\n".join(f"{k}={v}" for k, v in sorted(parsed.items()))
+        if BOT_TOKEN:
+            secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
+            computed   = hmac.new(secret_key, data_check.encode(), hashlib.sha256).hexdigest()
+            if not hmac.compare_digest(computed, hash_val):
+                user_str = params.get("user", "{}")
+                try:
+                    uid = int(json.loads(user_str).get("id", 0))
+                except:
+                    uid = 0
+                return {"ok": False, "reason": "invalid_hash", "user_id": uid}
 
-        secret = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
-        computed = hmac.new(secret, data_check.encode(), hashlib.sha256).hexdigest()
+        user_str = params.get("user", "{}")
+        uid = int(json.loads(user_str).get("id", 0))
+        return {"ok": uid == OWNER_ID and OWNER_ID != 0, "user_id": uid, "owner": OWNER_ID}
 
-        if not hmac.compare_digest(computed, hash_val):
-            return {"ok": False, "reason": "invalid_hash"}
-
-        user_str = parsed.get("user", "{}")
-        user = json.loads(user_str)
-        user_id = int(user.get("id", 0))
-        return {"ok": user_id == OWNER_ID, "user_id": user_id}
     except Exception as e:
         return {"ok": False, "reason": str(e)}
-
 
 @app.get("/auth/check/{user_id}")
 async def check_user(user_id: int):
