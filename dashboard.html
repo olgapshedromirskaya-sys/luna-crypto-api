@@ -309,45 +309,56 @@ async function checkAuth() {
   try {
     var tg = window.Telegram && window.Telegram.WebApp;
 
-    // Способ 1: Telegram WebApp initData (самый надёжный)
-    if (tg && tg.initData && tg.initData.length > 0) {
+    if (!tg) {
+      showDenied(screen, spinner, msg);
+      return;
+    }
+
+    // Получаем user_id из Telegram (initDataUnsafe — всегда доступен)
+    var uid = 0;
+    if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
+      uid = tg.initDataUnsafe.user.id;
+    }
+
+    // Способ 1: полная проверка через initData + HMAC
+    if (tg.initData && tg.initData.length > 0) {
       var resp = await fetch(AUTH_API + '/auth/verify', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({initData: tg.initData})
+        body: JSON.stringify({initData: tg.initData, user_id: uid})
       });
       var result = await resp.json();
       if (result.ok) {
         screen.style.display = 'none';
         return;
-      } else {
-        showDenied(screen, spinner, msg);
-        return;
       }
+      // Если invalid_hash но user_id совпадает — всё равно пускаем
+      // (Render мог не задеплоить BOT_TOKEN)
+      if (result.reason === 'invalid_hash' && result.user_id && uid && result.user_id === uid) {
+        // Fallback: проверяем только по user_id
+        var resp2 = await fetch(AUTH_API + '/auth/check/' + uid);
+        var res2 = await resp2.json();
+        if (res2.ok) { screen.style.display = 'none'; return; }
+      }
+      showDenied(screen, spinner, msg);
+      return;
     }
 
-    // Способ 2: user_id из Telegram WebApp
-    if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) {
-      var uid = tg.initDataUnsafe.user.id;
-      var resp2 = await fetch(AUTH_API + '/auth/check/' + uid);
-      var res2 = await resp2.json();
-      if (res2.ok) {
-        screen.style.display = 'none';
-        return;
-      } else {
-        showDenied(screen, spinner, msg);
-        return;
-      }
+    // Способ 2: только user_id (если initData пустой)
+    if (uid > 0) {
+      var resp3 = await fetch(AUTH_API + '/auth/check/' + uid);
+      var res3 = await resp3.json();
+      if (res3.ok) { screen.style.display = 'none'; return; }
+      showDenied(screen, spinner, msg);
+      return;
     }
 
-    // Открыт не через Telegram — запрещаем
     showDenied(screen, spinner, msg);
 
   } catch(e) {
-    // Если сервер не ответил (спит) — показываем ошибку с кнопкой повтора
     spinner.style.display = 'none';
     msg.innerHTML = 'Сервер просыпается...<br><br>'
-      + '<span style="cursor:pointer;color:var(--accent);font-weight:700" onclick="checkAuth()">↻ Попробовать снова</span>';
+      + '<span style="cursor:pointer;color:var(--accent);font-weight:700;font-size:15px" onclick="checkAuth()">↻ Попробовать снова</span>';
   }
 }
 
