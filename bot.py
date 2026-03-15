@@ -657,12 +657,26 @@ def format_prices_msg(prices: dict) -> str:
     return "\n".join(lines)
 
 
+def get_uid(update_or_query) -> int:
+    """Получить user_id из update или query"""
+    try:
+        if hasattr(update_or_query, 'effective_user') and update_or_query.effective_user:
+            return update_or_query.effective_user.id
+        if hasattr(update_or_query, 'from_user') and update_or_query.from_user:
+            return update_or_query.from_user.id
+    except:
+        pass
+    return 0
+
 # ── КЛАВИАТУРЫ ───────────────────────────────────────────────────────────────
-def main_keyboard():
+def main_keyboard(user_id: int = 0):
     from telegram import WebAppInfo
     dashboard_url = "https://olgapshedromirskaya-sys.github.io/luna-crypto-api/dashboard.html"
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📊 Открыть дашборд", web_app=WebAppInfo(url=dashboard_url))],
+    rows = []
+    # Кнопка дашборда — только для владельца
+    if user_id == OWNER_ID:
+        rows.append([InlineKeyboardButton("📊 Открыть дашборд", web_app=WebAppInfo(url=dashboard_url))])
+    rows += [
         [InlineKeyboardButton("⭐ Мой список монет", callback_data="group_fave")],
         [InlineKeyboardButton("🔥 Топ монеты",       callback_data="group_top"),
          InlineKeyboardButton("⚡ Альткоины",        callback_data="group_alt")],
@@ -670,7 +684,8 @@ def main_keyboard():
         [InlineKeyboardButton("💹 Цены топ-5",       callback_data="prices_top"),
          InlineKeyboardButton("💵 Мой бюджет",       callback_data="budget_menu")],
         [InlineKeyboardButton("❓ Помощь",            callback_data="help")],
-    ])
+    ]
+    return InlineKeyboardMarkup(rows)
 
 def budget_keyboard():
     return InlineKeyboardMarkup([
@@ -736,7 +751,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"💵 Текущий бюджет: *${budget:.0f}*\n\n"
         f"Выбери монету для анализа 👇"
     )
-    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=main_keyboard())
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=main_keyboard(update.effective_user.id if update.effective_user else 0))
 
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update): return
@@ -758,7 +773,7 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 🟢 ПОКУПАТЬ — хорошее время для входа
 🔴 ПРОДАВАТЬ — стоит зафиксировать прибыль
 🟡 ДЕРЖАТЬ — ждать лучшей точки входа"""
-    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=main_keyboard())
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=main_keyboard(update.effective_user.id if update.effective_user else 0))
 
 async def cmd_analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update): return
@@ -790,7 +805,7 @@ async def cmd_fave(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             reply_markup=coin_keyboard("⭐ Мой список")
         )
     else:
-        await msg.edit_text("⚠️ Ошибка загрузки.", reply_markup=main_keyboard())
+        await msg.edit_text("⚠️ Ошибка загрузки.", reply_markup=main_keyboard(update.effective_user.id if update.effective_user else 0))
 
 async def do_multi_analysis(update: Update, ctx: ContextTypes.DEFAULT_TYPE, coin: str):
     """Анализ по всем таймфреймам сразу"""
@@ -865,12 +880,12 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     data = query.data
 
     if data == "back_main":
-        await query.message.reply_text("Выбери монету 👇", reply_markup=main_keyboard())
+        await query.message.reply_text("Выбери монету 👇", reply_markup=main_keyboard(query.from_user.id if query else 0))
 
     elif data == "help":
         await query.message.reply_text(
             "📖 Напиши /help для списка всех команд.",
-            reply_markup=main_keyboard()
+            reply_markup=main_keyboard(query.from_user.id if query else 0)
         )
 
     elif data == "budget_menu":
@@ -889,7 +904,7 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             f"✅ Бюджет обновлён: *${amount:.0f}*\n\nТеперь все расчёты будут под эту сумму.",
             parse_mode="Markdown",
-            reply_markup=main_keyboard()
+            reply_markup=main_keyboard(query.from_user.id if query else 0)
         )
 
     elif data == "budget_custom":
@@ -938,9 +953,9 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         prices = await get_prices(symbols)
         if prices:
             await loading.edit_text(format_prices_msg(prices), parse_mode="Markdown",
-                                     reply_markup=main_keyboard())
+                                     reply_markup=main_keyboard(update.effective_user.id if update.effective_user else 0))
         else:
-            await loading.edit_text("⚠️ Ошибка загрузки цен.", reply_markup=main_keyboard())
+            await loading.edit_text("⚠️ Ошибка загрузки цен.", reply_markup=main_keyboard(update.effective_user.id if update.effective_user else 0))
 
 async def text_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update):
@@ -961,7 +976,7 @@ async def text_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 f"✅ Бюджет обновлён: *${amount:.0f}*\n\nТеперь все расчёты будут под эту сумму.",
                 parse_mode="Markdown",
-                reply_markup=main_keyboard()
+                reply_markup=main_keyboard(update.effective_user.id if update.effective_user else 0)
             )
         except:
             await update.message.reply_text(
@@ -978,7 +993,7 @@ async def text_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "Напиши тикер монеты (например *ETH*) или используй меню 👇",
             parse_mode="Markdown",
-            reply_markup=main_keyboard()
+            reply_markup=main_keyboard(update.effective_user.id if update.effective_user else 0)
         )
 
 
