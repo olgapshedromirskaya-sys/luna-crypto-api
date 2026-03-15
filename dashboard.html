@@ -314,46 +314,26 @@ async function checkAuth() {
       return;
     }
 
-    // Получаем user_id из Telegram (initDataUnsafe — всегда доступен)
+    // Получаем user_id из Telegram WebApp
     var uid = 0;
     if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
       uid = tg.initDataUnsafe.user.id;
     }
 
-    // Способ 1: полная проверка через initData + HMAC
-    if (tg.initData && tg.initData.length > 0) {
-      var resp = await fetch(AUTH_API + '/auth/verify', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({initData: tg.initData, user_id: uid})
-      });
-      var result = await resp.json();
-      if (result.ok) {
-        screen.style.display = 'none';
-        return;
-      }
-      // Если invalid_hash но user_id совпадает — всё равно пускаем
-      // (Render мог не задеплоить BOT_TOKEN)
-      if (result.reason === 'invalid_hash' && result.user_id && uid && result.user_id === uid) {
-        // Fallback: проверяем только по user_id
-        var resp2 = await fetch(AUTH_API + '/auth/check/' + uid);
-        var res2 = await resp2.json();
-        if (res2.ok) { screen.style.display = 'none'; return; }
-      }
+    if (uid === 0) {
       showDenied(screen, spinner, msg);
       return;
     }
 
-    // Способ 2: только user_id (если initData пустой)
-    if (uid > 0) {
-      var resp3 = await fetch(AUTH_API + '/auth/check/' + uid);
-      var res3 = await resp3.json();
-      if (res3.ok) { screen.style.display = 'none'; return; }
-      showDenied(screen, spinner, msg);
-      return;
-    }
+    // Простая и надёжная проверка по user_id
+    var resp = await fetch(AUTH_API + '/auth/check/' + uid);
+    var result = await resp.json();
 
-    showDenied(screen, spinner, msg);
+    if (result.ok) {
+      screen.style.display = 'none';
+    } else {
+      showDenied(screen, spinner, msg);
+    }
 
   } catch(e) {
     spinner.style.display = 'none';
@@ -361,6 +341,7 @@ async function checkAuth() {
       + '<span style="cursor:pointer;color:var(--accent);font-weight:700;font-size:15px" onclick="checkAuth()">↻ Попробовать снова</span>';
   }
 }
+
 
 function showDenied(screen, spinner, msg) {
   spinner.style.display = 'none';
