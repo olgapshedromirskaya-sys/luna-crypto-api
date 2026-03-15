@@ -390,19 +390,46 @@ async def analyze(symbol: str, interval: str = "60"):
     divergence = detect_divergence(close, rsi_full_series, macd_hist_s)
     signal_data = determine_signal(rsi, macd, price, ema50, ema200, bb)
 
-    # Сигнал MA30/90
+    # Сигнал MA30/90 — свежее пересечение (последние 3 свечи)
     ma_signal = "neutral"
     ma_cross = None
-    if sma90:
-        prev_sma30 = round(float(close.rolling(30).mean().iloc[-2]), 4)
-        prev_sma90 = round(float(close.rolling(90).mean().iloc[-2]), 4)
-        if prev_sma30 < prev_sma90 and sma30 > sma90:
-            ma_cross = "golden"   # быстрая пересекла медленную снизу вверх — бычий сигнал
-        elif prev_sma30 > prev_sma90 and sma30 < sma90:
-            ma_cross = "death"    # быстрая пересекла медленную сверху вниз — медвежий сигнал
-        if sma30 > sma90:
+    ma_cross_distance = None
+    ma_cross_candles_ago = None   # сколько свечей назад произошло пересечение
+
+    if sma90 and len(close) >= 95:
+        sma30_series = close.rolling(30).mean()
+        sma90_series = close.rolling(90).mean()
+
+        cur30  = float(sma30_series.iloc[-1])
+        cur90  = float(sma90_series.iloc[-1])
+
+        # Текущий разрыв в %
+        gap_now = (cur30 - cur90) / cur90 * 100
+        ma_cross_distance = round(gap_now, 3)
+
+        # Ищем пересечение среди последних 3 свечей
+        # Проверяем: была ли смена знака разрыва в последних 3 свечах
+        for i in range(1, 4):
+            past30 = float(sma30_series.iloc[-1 - i])
+            past90 = float(sma90_series.iloc[-1 - i])
+            gap_past = (past30 - past90) / past90 * 100
+
+            # Смена знака = пересечение
+            if gap_past < 0 and gap_now > 0:
+                # MA30 была ниже MA90, теперь выше — Золотой крест
+                ma_cross = "golden"
+                ma_cross_candles_ago = i
+                break
+            elif gap_past > 0 and gap_now < 0:
+                # MA30 была выше MA90, теперь ниже — Крест смерти
+                ma_cross = "death"
+                ma_cross_candles_ago = i
+                break
+
+        # Текущий тренд MA
+        if cur30 > cur90:
             ma_signal = "bullish"
-        elif sma30 < sma90:
+        elif cur30 < cur90:
             ma_signal = "bearish"
     trade = calc_trade_levels(price, signal_data["signal"], atr)
 
@@ -429,6 +456,8 @@ async def analyze(symbol: str, interval: str = "60"):
             "sma90": sma90,
             "ma_signal": ma_signal,
             "ma_cross": ma_cross,
+            "ma_cross_candles_ago": ma_cross_candles_ago,
+            "ma_cross_distance": ma_cross_distance,
             "bollinger": bb,
             "atr": round(atr, 4),
             "divergence": divergence
