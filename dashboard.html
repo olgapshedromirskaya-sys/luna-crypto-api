@@ -402,17 +402,38 @@ function renderAnalysis(d, hist, klines) {
 
   // MA30/90
   var sma30 = ind.sma30, sma90 = ind.sma90, maSig = ind.ma_signal, maCross = ind.ma_cross;
+  var maAgo = ind.ma_cross_candles_ago, maDist = ind.ma_cross_distance;
   var maCls = maSig === 'bullish' ? 'up' : maSig === 'bearish' ? 'down' : 'neu';
   var ma30cmp = sma30 ? (price > sma30 ? '<span class="up">Цена ВЫШЕ ↑</span>' : '<span class="down">Цена НИЖЕ ↓</span>') : '—';
   var ma90cmp = sma90 ? (price > sma90 ? '<span class="up">Цена ВЫШЕ ↑</span>' : '<span class="down">Цена НИЖЕ ↓</span>') : '—';
   var maConclusionCls, maConclusionText;
   if (maSig === 'bullish') { maConclusionCls = 'bull'; maConclusionText = '✅ MA30 выше MA90 — тренд восходящий. Краткосрочный рост сильнее долгосрочного.'; }
   else if (maSig === 'bearish') { maConclusionCls = 'bear'; maConclusionText = '❌ MA30 ниже MA90 — тренд нисходящий. Краткосрочное давление сильнее.'; }
-  else { maConclusionCls = 'neut'; maConclusionText = '⏸ MA30 ≈ MA90 — боковик. Тренда нет, монета топчется на месте.'; }
+  else { maConclusionCls = 'neut'; maConclusionText = '⏸ MA30 ≈ MA90 — боковик. Тренда нет.'; }
+  if (maCross && maAgo) {
+    var freshStr = maAgo === 1 ? 'только что' : maAgo + ' свечи назад';
+    maConclusionText += ' Крест произошёл ' + freshStr + ' — сигнал свежий!';
+  }
 
   var crossHtml = '';
-  if (maCross === 'golden') crossHtml = '<div class="cross-alert golden">🌟 ЗОЛОТОЙ КРЕСТ! MA30 пересекла MA90 снизу вверх.<br>Это один из сильнейших сигналов роста в техническом анализе.</div>';
-  else if (maCross === 'death') crossHtml = '<div class="cross-alert death">💀 КРЕСТ СМЕРТИ! MA30 пересекла MA90 сверху вниз.<br>Это один из сильнейших сигналов падения в техническом анализе.</div>';
+  var agoMap = {1: 'только что (1 свеча назад)', 2: '2 свечи назад', 3: '3 свечи назад'};
+  var agoStr = maAgo ? agoMap[maAgo] || '' : '';
+  var distStr = maDist !== null ? Math.abs(maDist).toFixed(2) + '%' : '';
+  if (maCross === 'golden') {
+    crossHtml = '<div class="cross-alert golden">'
+      + '🌟 ЗОЛОТОЙ КРЕСТ — ' + agoStr + '<br>'
+      + '<strong>MA30 пересекла MA90 снизу вверх!</strong><br>'
+      + 'Это сигнал начала роста. Разрыв сейчас: +' + distStr + '<br>'
+      + '✅ Хороший момент для покупки — проверь другие индикаторы и действуй!'
+      + '</div>';
+  } else if (maCross === 'death') {
+    crossHtml = '<div class="cross-alert death">'
+      + '💀 КРЕСТ СМЕРТИ — ' + agoStr + '<br>'
+      + '<strong>MA30 пересекла MA90 сверху вниз!</strong><br>'
+      + 'Это сигнал начала падения. Разрыв сейчас: -' + distStr + '<br>'
+      + '❌ Не покупай сейчас — дождись восстановления тренда.'
+      + '</div>';
+  }
 
   // Support / Resistance
   var supH = lvl.support.map(function(s){ return '<div class="sr-p up">' + fp(s) + '</div>'; }).join('') || '<div class="sr-p neu">—</div>';
