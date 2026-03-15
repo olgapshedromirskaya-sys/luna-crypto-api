@@ -10,8 +10,16 @@ import pandas as pd
 import numpy as np
 from typing import Optional
 import asyncio
+import os
+import hmac
+import hashlib
+import json
+from urllib.parse import unquote
 
 app = FastAPI(title="LUNA Crypto API")
+
+OWNER_ID  = int(os.environ.get("OWNER_ID", "0"))
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 
 # Разрешаем запросы с любого домена (нужно для фронтенда)
 app.add_middleware(
@@ -324,6 +332,55 @@ def calc_trade_levels(price: float, signal: str, atr: float):
 
 
 # ─── API ENDPOINTS ───────────────────────────────────────────────────────────
+
+
+@app.post("/auth/verify")
+async def verify_telegram_auth(payload: dict):
+    """
+    Проверяет Telegram WebApp initData.
+    Возвращает {ok: true} если пользователь = владелец бота.
+    """
+    init_data = payload.get("initData", "")
+    if not init_data:
+        return {"ok": False, "reason": "no_data"}
+
+    if not BOT_TOKEN:
+        # Если BOT_TOKEN не задан — fallback: проверяем только user_id
+        try:
+            user_id = payload.get("user_id", 0)
+            return {"ok": int(user_id) == OWNER_ID}
+        except:
+            return {"ok": False, "reason": "no_token"}
+
+    # Проверяем подпись Telegram WebApp
+    try:
+        parsed = {}
+        for part in unquote(init_data).split("&"):
+            if "=" in part:
+                k, v = part.split("=", 1)
+                parsed[k] = v
+
+        hash_val = parsed.pop("hash", "")
+        data_check = "\n".join(f"{k}={v}" for k, v in sorted(parsed.items()))
+
+        secret = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
+        computed = hmac.new(secret, data_check.encode(), hashlib.sha256).hexdigest()
+
+        if not hmac.compare_digest(computed, hash_val):
+            return {"ok": False, "reason": "invalid_hash"}
+
+        user_str = parsed.get("user", "{}")
+        user = json.loads(user_str)
+        user_id = int(user.get("id", 0))
+        return {"ok": user_id == OWNER_ID, "user_id": user_id}
+    except Exception as e:
+        return {"ok": False, "reason": str(e)}
+
+
+@app.get("/auth/check/{user_id}")
+async def check_user(user_id: int):
+    """Простая проверка user_id без подписи (для fallback)"""
+    return {"ok": user_id == OWNER_ID}
 
 @app.get("/")
 async def root():
