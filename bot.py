@@ -258,11 +258,15 @@ def format_multi_analysis(symbol: str, all_data: dict, budget_usd: float = 22.0)
         sma90_v = d["indicators"].get("sma90")
         ma_sig  = d["indicators"].get("ma_signal", "neutral")
         ma_cr   = d["indicators"].get("ma_cross")
+        ma_ago2 = d["indicators"].get("ma_cross_candles_ago")
+        ma_dst  = d["indicators"].get("ma_cross_distance")
         if sma30_v and sma90_v:
+            ago2_map = {1: " (1 св. назад)", 2: " (2 св. назад)", 3: " (3 св. назад)"}
+            ago2_str = ago2_map.get(ma_ago2, "") if ma_ago2 else ""
             if ma_cr == "golden":
-                ma_short = f"MA: 🌟 Золотой крест — сильный сигнал роста"
+                ma_short = f"MA: 🌟 ЗОЛОТОЙ КРЕСТ{ago2_str} — сигнал роста!"
             elif ma_cr == "death":
-                ma_short = f"MA: 💀 Крест смерти — сильный сигнал падения"
+                ma_short = f"MA: 💀 КРЕСТ СМЕРТИ{ago2_str} — сигнал падения!"
             elif ma_sig == "bullish":
                 ma_short = f"MA30 > MA90 — тренд вверх 🟢"
             elif ma_sig == "bearish":
@@ -457,10 +461,27 @@ def format_analysis(data: dict, budget_usd: float = 22.0) -> str:
     ma_cross  = ind.get("ma_cross")
 
     if sma30 and sma90:
+        ma_dist = ind.get("ma_cross_distance")
+        ma_ago  = ind.get("ma_cross_candles_ago")
+
+        ago_map = {1: "только что (1 свеча назад)", 2: "2 свечи назад", 3: "3 свечи назад"}
+        ago_str = ago_map.get(ma_ago, "") if ma_ago else ""
+        dist_str = f"{abs(ma_dist):.2f}%" if ma_dist is not None else ""
+
         if ma_cross == "golden":
-            ma_cross_txt = "🌟 Золотой крест! MA30 пересекла MA90 снизу вверх — сильный сигнал роста"
+            ma_cross_txt = (
+                f"🌟 ЗОЛОТОЙ КРЕСТ — {ago_str}\n"
+                f"MA30 пересекла MA90 снизу вверх!\n"
+                f"Сигнал начала роста. Разрыв: +{dist_str}\n"
+                f"Хороший момент для покупки — действуй!"
+            )
         elif ma_cross == "death":
-            ma_cross_txt = "💀 Крест смерти! MA30 пересекла MA90 сверху вниз — сильный сигнал падения"
+            ma_cross_txt = (
+                f"💀 КРЕСТ СМЕРТИ — {ago_str}\n"
+                f"MA30 пересекла MA90 сверху вниз!\n"
+                f"Сигнал начала падения. Разрыв: -{dist_str}\n"
+                f"Не покупай сейчас — дождись восстановления."
+            )
         else:
             ma_cross_txt = None
 
