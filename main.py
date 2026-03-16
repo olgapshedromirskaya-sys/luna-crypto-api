@@ -371,6 +371,280 @@ async def verify_telegram_auth(payload: dict):
     except Exception as e:
         return {"ok": False, "reason": str(e)}
 
+
+# ── МАППИНГ МОНЕТ ДЛЯ COINGECKO ──────────────────────────────────────────────
+COINGECKO_IDS = {
+    "BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "XRP": "ripple",
+    "BNB": "binancecoin", "ADA": "cardano", "DOGE": "dogecoin", "AVAX": "avalanche-2",
+    "TON": "the-open-network", "LTC": "litecoin", "LINK": "chainlink",
+    "ATOM": "cosmos", "BCH": "bitcoin-cash", "NEAR": "near", "ICP": "internet-computer",
+    "SUI": "sui", "OP": "optimism", "HYPE": "hyperliquid", "DOT": "polkadot",
+}
+
+async def get_fear_greed() -> dict:
+    """Fear & Greed Index от alternative.me"""
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            r = await client.get("https://api.alternative.me/fng/?limit=1")
+            d = r.json()
+            item = d["data"][0]
+            val = int(item["value"])
+            cls = item["value_classification"]
+            # Пороговые значения: 0-20 экстремальный страх, 20-45 страх,
+            # 45-55 нейтрально, 55-80 жадность, 80-100 экстремальная жадность
+            if val <= 20:
+                emoji = "😱"
+                zone  = "0–20"
+                ru    = "Экстремальный страх — все продают в панике. Исторически лучший момент для покупки."
+                signal = "strong_buy"
+            elif val <= 45:
+                emoji = "😟"
+                zone  = "20–45"
+                ru    = "Страх — рынок напуган. Хорошая зона для осторожного входа."
+                signal = "buy"
+            elif val <= 55:
+                emoji = "😐"
+                zone  = "45–55"
+                ru    = "Нейтральное состояние — нет явного перекоса. Следи за другими индикаторами."
+                signal = "neutral"
+            elif val <= 80:
+                emoji = "😊"
+                zone  = "55–80"
+                ru    = "Жадность — рынок разогрет. Покупать осторожно, возможна коррекция."
+                signal = "caution"
+            else:
+                emoji = "🤑"
+                zone  = "80–100"
+                ru    = "Экстремальная жадность — все покупают в эйфории. Высокий риск обвала."
+                signal = "danger"
+            return {
+                "value": val,
+                "zone": zone,
+                "classification": cls,
+                "emoji": emoji,
+                "ru": ru,
+                "signal": signal,
+            }
+    except:
+        return None
+
+async def get_coingecko(symbol: str) -> dict:
+    """Данные с CoinGecko: капитализация, рейтинг, сентимент"""
+    cg_id = COINGECKO_IDS.get(symbol.upper())
+    if not cg_id:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(
+                f"https://api.coingecko.com/api/v3/coins/{cg_id}",
+                params={"localization": "false", "tickers": "false",
+                        "market_data": "true", "community_data": "true",
+                        "developer_data": "false"}
+            )
+            d = r.json()
+            md = d.get("market_data", {})
+            cap = md.get("market_cap", {}).get("usd", 0)
+            vol = md.get("total_volume", {}).get("usd", 0)
+            cap_change = md.get("market_cap_change_percentage_24h", 0)
+            sentiment_up = d.get("sentiment_votes_up_percentage", 0)
+            sentiment_dn = d.get("sentiment_votes_down_percentage", 0)
+            rank = d.get("market_cap_rank", 0)
+            ath = md.get("ath", {}).get("usd", 0)
+            ath_change = md.get("ath_change_percentage", {}).get("usd", 0)
+
+            def fmt_big(n):
+                if n >= 1e9: return f"${n/1e9:.1f}B"
+                if n >= 1e6: return f"${n/1e6:.1f}M"
+                return f"${n:,.0f}"
+
+            return {
+                "rank": rank,
+                "market_cap": cap,
+                "market_cap_fmt": fmt_big(cap),
+                "volume_24h": vol,
+                "volume_fmt": fmt_big(vol),
+                "cap_change_24h": round(cap_change, 2),
+                "sentiment_up": round(sentiment_up, 1),
+                "sentiment_down": round(sentiment_dn, 1),
+                "ath": ath,
+                "ath_change_pct": round(ath_change, 1),
+                "description": d.get("description", {}).get("en", "")[:300],
+            }
+    except:
+        return None
+
+async def get_news(symbol: str) -> list:
+    """Новости с CryptoPanic (бесплатный публичный API)"""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(
+                "https://cryptopanic.com/api/free/v1/posts/",
+                params={"auth_token": "free", "currencies": symbol.upper(),
+                        "kind": "news", "public": "true", "filter": "hot"}
+            )
+            items = r.json().get("results", [])[:5]
+            news = []
+            for item in items:
+                votes = item.get("votes", {})
+                positive = int(votes.get("positive", 0))
+                negative = int(votes.get("negative", 0))
+                sentiment = "positive" if positive > negative else "negative" if negative > positive else "neutral"
+                news.append({
+                    "title": item.get("title", ""),
+                    "url": item.get("url", ""),
+                    "published": item.get("published_at", "")[:10],
+                    "sentiment": sentiment,
+                    "votes_pos": positive,
+                    "votes_neg": negative,
+                })
+            return news
+    except:
+        return []
+
+
+async def get_coinmarketcal(symbol: str) -> list:
+    """События с CoinMarketCal (публичный поиск через их сайт)"""
+    try:
+        async with httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
+            # Используем их бесплатный API v1
+            headers = {
+                "Accept": "application/json",
+                "x-api-key": "mcal_free",  # публичный ключ для базового доступа
+            }
+            r = await client.get(
+                "https://api.coinmarketcal.com/v1/events",
+                params={
+                    "coins": symbol.upper(),
+                    "max": 8,
+                    "dateRangeStart": "today",
+                    "sortBy": "created_desc",
+                },
+                headers=headers
+            )
+            if r.status_code != 200:
+                # Fallback: scrape через их public endpoint
+                r2 = await client.get(
+                    f"https://coinmarketcal.com/en/coin/{symbol.lower()}",
+                    headers={"User-Agent": "Mozilla/5.0"}
+                )
+                return []  # без парсинга HTML не вернём
+
+            items = r.json().get("body", [])[:8]
+            events = []
+            from datetime import datetime
+            today = datetime.utcnow().date()
+            for item in items:
+                date_str = item.get("date_event", "")[:10]
+                try:
+                    ev_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+                    is_past = ev_date < today
+                    days_diff = (ev_date - today).days
+                except:
+                    is_past = False
+                    days_diff = 0
+
+                confidence = item.get("percentage", 0)
+                title = item.get("title", {})
+                if isinstance(title, dict):
+                    title = title.get("en", "")
+
+                events.append({
+                    "title": title[:100],
+                    "date": date_str,
+                    "is_past": is_past,
+                    "days_diff": days_diff,
+                    "confidence": confidence,
+                    "category": item.get("categories", [{}])[0].get("name", "") if item.get("categories") else "",
+                    "description": item.get("description", {}).get("en", "")[:200] if isinstance(item.get("description"), dict) else "",
+                })
+            return events
+    except:
+        return []
+
+
+@app.get("/fundamental/{symbol}")
+async def get_fundamental(symbol: str):
+    """Полный фундаментальный анализ: Fear&Greed, CoinGecko, новости, события"""
+    symbol = symbol.upper()
+
+    fg, cg, news, events = await asyncio.gather(
+        get_fear_greed(),
+        get_coingecko(symbol),
+        get_news(symbol),
+        get_coinmarketcal(symbol),
+    )
+
+    # Фундаментальный сигнал — балльная система
+    fund_score = 0
+    fund_signals = []
+
+    if fg:
+        sig = fg.get("signal", "neutral")
+        if sig == "strong_buy":
+            fund_score += 2
+            fund_signals.append(f"Fear & Greed {fg['value']} (0–20): Экстремальный страх — лучший момент для покупки")
+        elif sig == "buy":
+            fund_score += 1
+            fund_signals.append(f"Fear & Greed {fg['value']} (20–45): Страх — хорошая зона для входа")
+        elif sig == "caution":
+            fund_score -= 1
+            fund_signals.append(f"Fear & Greed {fg['value']} (55–80): Жадность — покупать осторожно")
+        elif sig == "danger":
+            fund_score -= 2
+            fund_signals.append(f"Fear & Greed {fg['value']} (80–100): Экстремальная жадность — высокий риск")
+
+    if cg:
+        if cg["sentiment_up"] > 70:
+            fund_score += 1
+            fund_signals.append(f"Сообщество позитивно ({cg['sentiment_up']}% за рост)")
+        elif cg["sentiment_up"] < 40:
+            fund_score -= 1
+            fund_signals.append(f"Сообщество негативно ({cg['sentiment_up']}% за рост)")
+        vol_ratio = cg["volume_24h"] / cg["market_cap"] if cg["market_cap"] > 0 else 0
+        if vol_ratio > 0.15:
+            fund_score += 1
+            fund_signals.append("Высокий объём торгов — повышенный интерес к монете")
+
+    if news:
+        pos = sum(1 for n in news if n["sentiment"] == "positive")
+        neg = sum(1 for n in news if n["sentiment"] == "negative")
+        if pos > neg:
+            fund_score += 1
+            fund_signals.append(f"Позитивный новостной фон ({pos} позитивных из {len(news)})")
+        elif neg > pos:
+            fund_score -= 1
+            fund_signals.append(f"Негативный новостной фон ({neg} негативных из {len(news)})")
+
+    # Предстоящие события — позитивный сигнал если есть важные
+    upcoming = [e for e in events if not e["is_past"] and e["days_diff"] <= 14]
+    if upcoming:
+        fund_score += 1
+        fund_signals.append(f"{len(upcoming)} важных событий в ближайшие 14 дней")
+
+    if fund_score >= 2:
+        fund_verdict = "ПОЗИТИВНО"
+        fund_emoji = "🟢"
+    elif fund_score <= -2:
+        fund_verdict = "НЕГАТИВНО"
+        fund_emoji = "🔴"
+    else:
+        fund_verdict = "НЕЙТРАЛЬНО"
+        fund_emoji = "🟡"
+
+    return {
+        "symbol": symbol,
+        "fear_greed": fg,
+        "coingecko": cg,
+        "news": news,
+        "events": events,
+        "fund_score": fund_score,
+        "fund_verdict": fund_verdict,
+        "fund_emoji": fund_emoji,
+        "fund_signals": fund_signals,
+    }
+
+
+
 @app.get("/auth/check/{user_id}")
 async def check_user(user_id: int):
     """Простая проверка user_id без подписи (для fallback)"""
