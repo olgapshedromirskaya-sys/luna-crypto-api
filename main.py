@@ -19,7 +19,9 @@ from urllib.parse import unquote
 app = FastAPI(title="LUNA Crypto API")
 
 OWNER_ID  = int(os.environ.get("OWNER_ID", "0"))
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+BOT_TOKEN       = os.environ.get("BOT_TOKEN", "")
+BYBIT_API_KEY    = os.environ.get("BYBIT_API_KEY", "")
+BYBIT_API_SECRET = os.environ.get("BYBIT_API_SECRET", "")
 
 # Разрешаем запросы с любого домена (нужно для фронтенда)
 app.add_middleware(
@@ -384,118 +386,89 @@ COINGECKO_IDS = {
 async def get_fear_greed() -> dict:
     """Fear & Greed Index от alternative.me"""
     try:
-        async with httpx.AsyncClient(timeout=8) as client:
+        async with httpx.AsyncClient(timeout=6) as client:
             r = await client.get("https://api.alternative.me/fng/?limit=1")
             d = r.json()
             item = d["data"][0]
             val = int(item["value"])
             cls = item["value_classification"]
-            # Пороговые значения: 0-20 экстремальный страх, 20-45 страх,
-            # 45-55 нейтрально, 55-80 жадность, 80-100 экстремальная жадность
             if val <= 20:
-                emoji = "😱"
-                zone  = "0–20"
-                ru    = "Экстремальный страх — все продают в панике. Исторически лучший момент для покупки."
-                signal = "strong_buy"
+                emoji = "😱"; zone = "0–20"; ru = "Экстремальный страх — лучший момент для покупки."; signal = "strong_buy"
             elif val <= 45:
-                emoji = "😟"
-                zone  = "20–45"
-                ru    = "Страх — рынок напуган. Хорошая зона для осторожного входа."
-                signal = "buy"
+                emoji = "😟"; zone = "20–45"; ru = "Страх — хорошая зона для осторожного входа."; signal = "buy"
             elif val <= 55:
-                emoji = "😐"
-                zone  = "45–55"
-                ru    = "Нейтральное состояние — нет явного перекоса. Следи за другими индикаторами."
-                signal = "neutral"
+                emoji = "😐"; zone = "45–55"; ru = "Нейтральное состояние — следи за другими индикаторами."; signal = "neutral"
             elif val <= 80:
-                emoji = "😊"
-                zone  = "55–80"
-                ru    = "Жадность — рынок разогрет. Покупать осторожно, возможна коррекция."
-                signal = "caution"
+                emoji = "😊"; zone = "55–80"; ru = "Жадность — покупать осторожно, возможна коррекция."; signal = "caution"
             else:
-                emoji = "🤑"
-                zone  = "80–100"
-                ru    = "Экстремальная жадность — все покупают в эйфории. Высокий риск обвала."
-                signal = "danger"
-            return {
-                "value": val,
-                "zone": zone,
-                "classification": cls,
-                "emoji": emoji,
-                "ru": ru,
-                "signal": signal,
-            }
-    except:
-        return None
+                emoji = "🤑"; zone = "80–100"; ru = "Экстремальная жадность — высокий риск обвала."; signal = "danger"
+            return {"value": val, "zone": zone, "classification": cls, "emoji": emoji, "ru": ru, "signal": signal}
+    except Exception as e:
+        return {"value": None, "zone": "—", "emoji": "❓", "ru": f"Не удалось загрузить: {str(e)[:50]}", "signal": "neutral", "error": True}
+
 
 async def get_coingecko(symbol: str) -> dict:
-    """Данные с CoinGecko: капитализация, рейтинг, сентимент"""
+    """Данные с CoinGecko"""
     cg_id = COINGECKO_IDS.get(symbol.upper())
     if not cg_id:
         return None
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=8) as client:
             r = await client.get(
                 f"https://api.coingecko.com/api/v3/coins/{cg_id}",
                 params={"localization": "false", "tickers": "false",
                         "market_data": "true", "community_data": "true",
                         "developer_data": "false"}
             )
+            if r.status_code != 200:
+                return {"error": True, "reason": f"HTTP {r.status_code}"}
             d = r.json()
             md = d.get("market_data", {})
-            cap = md.get("market_cap", {}).get("usd", 0)
-            vol = md.get("total_volume", {}).get("usd", 0)
-            cap_change = md.get("market_cap_change_percentage_24h", 0)
-            sentiment_up = d.get("sentiment_votes_up_percentage", 0)
-            sentiment_dn = d.get("sentiment_votes_down_percentage", 0)
-            rank = d.get("market_cap_rank", 0)
-            ath = md.get("ath", {}).get("usd", 0)
-            ath_change = md.get("ath_change_percentage", {}).get("usd", 0)
-
+            cap = md.get("market_cap", {}).get("usd", 0) or 0
+            vol = md.get("total_volume", {}).get("usd", 0) or 0
             def fmt_big(n):
                 if n >= 1e9: return f"${n/1e9:.1f}B"
                 if n >= 1e6: return f"${n/1e6:.1f}M"
                 return f"${n:,.0f}"
-
             return {
-                "rank": rank,
-                "market_cap": cap,
-                "market_cap_fmt": fmt_big(cap),
-                "volume_24h": vol,
-                "volume_fmt": fmt_big(vol),
-                "cap_change_24h": round(cap_change, 2),
-                "sentiment_up": round(sentiment_up, 1),
-                "sentiment_down": round(sentiment_dn, 1),
-                "ath": ath,
-                "ath_change_pct": round(ath_change, 1),
-                "description": d.get("description", {}).get("en", "")[:300],
+                "rank": d.get("market_cap_rank", 0),
+                "market_cap": cap, "market_cap_fmt": fmt_big(cap),
+                "volume_24h": vol, "volume_fmt": fmt_big(vol),
+                "cap_change_24h": round(md.get("market_cap_change_percentage_24h") or 0, 2),
+                "sentiment_up": round(d.get("sentiment_votes_up_percentage") or 0, 1),
+                "sentiment_down": round(d.get("sentiment_votes_down_percentage") or 0, 1),
+                "ath": md.get("ath", {}).get("usd", 0) or 0,
+                "ath_change_pct": round(md.get("ath_change_percentage", {}).get("usd") or 0, 1),
             }
-    except:
-        return None
+    except Exception as e:
+        return {"error": True, "reason": str(e)[:60]}
+
 
 async def get_news(symbol: str) -> list:
-    """Новости с CryptoPanic (бесплатный публичный API)"""
+    """Новости с CryptoPanic"""
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=7) as client:
             r = await client.get(
                 "https://cryptopanic.com/api/free/v1/posts/",
                 params={"auth_token": "free", "currencies": symbol.upper(),
                         "kind": "news", "public": "true", "filter": "hot"}
             )
+            if r.status_code != 200:
+                return []
             items = r.json().get("results", [])[:5]
             news = []
             for item in items:
                 votes = item.get("votes", {})
-                positive = int(votes.get("positive", 0))
-                negative = int(votes.get("negative", 0))
-                sentiment = "positive" if positive > negative else "negative" if negative > positive else "neutral"
+                pos = int(votes.get("positive", 0))
+                neg = int(votes.get("negative", 0))
+                sentiment = "positive" if pos > neg else "negative" if neg > pos else "neutral"
                 news.append({
                     "title": item.get("title", ""),
                     "url": item.get("url", ""),
-                    "published": item.get("published_at", "")[:10],
+                    "published": (item.get("published_at") or "")[:10],
                     "sentiment": sentiment,
-                    "votes_pos": positive,
-                    "votes_neg": negative,
+                    "votes_pos": pos,
+                    "votes_neg": neg,
                 })
             return news
     except:
@@ -503,59 +476,39 @@ async def get_news(symbol: str) -> list:
 
 
 async def get_coinmarketcal(symbol: str) -> list:
-    """События с CoinMarketCal (публичный поиск через их сайт)"""
+    """События с CoinMarketCal"""
     try:
-        async with httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
-            # Используем их бесплатный API v1
-            headers = {
-                "Accept": "application/json",
-                "x-api-key": "mcal_free",  # публичный ключ для базового доступа
-            }
+        async with httpx.AsyncClient(timeout=8, follow_redirects=True) as client:
             r = await client.get(
                 "https://api.coinmarketcal.com/v1/events",
-                params={
-                    "coins": symbol.upper(),
-                    "max": 8,
-                    "dateRangeStart": "today",
-                    "sortBy": "created_desc",
-                },
-                headers=headers
+                params={"coins": symbol.upper(), "max": 8, "dateRangeStart": "today", "sortBy": "created_desc"},
+                headers={"Accept": "application/json", "x-api-key": "mcal_free"}
             )
             if r.status_code != 200:
-                # Fallback: scrape через их public endpoint
-                r2 = await client.get(
-                    f"https://coinmarketcal.com/en/coin/{symbol.lower()}",
-                    headers={"User-Agent": "Mozilla/5.0"}
-                )
-                return []  # без парсинга HTML не вернём
-
+                return []
             items = r.json().get("body", [])[:8]
             events = []
             from datetime import datetime
             today = datetime.utcnow().date()
             for item in items:
-                date_str = item.get("date_event", "")[:10]
+                date_str = (item.get("date_event") or "")[:10]
                 try:
                     ev_date = datetime.strptime(date_str, "%Y-%m-%d").date()
                     is_past = ev_date < today
                     days_diff = (ev_date - today).days
                 except:
-                    is_past = False
-                    days_diff = 0
-
-                confidence = item.get("percentage", 0)
+                    is_past = False; days_diff = 0
                 title = item.get("title", {})
-                if isinstance(title, dict):
-                    title = title.get("en", "")
-
+                if isinstance(title, dict): title = title.get("en", "")
+                cats = item.get("categories", [])
+                cat = cats[0].get("name", "") if cats else ""
                 events.append({
-                    "title": title[:100],
+                    "title": (title or "")[:100],
                     "date": date_str,
                     "is_past": is_past,
                     "days_diff": days_diff,
-                    "confidence": confidence,
-                    "category": item.get("categories", [{}])[0].get("name", "") if item.get("categories") else "",
-                    "description": item.get("description", {}).get("en", "")[:200] if isinstance(item.get("description"), dict) else "",
+                    "confidence": item.get("percentage", 0),
+                    "category": cat,
                 })
             return events
     except:
@@ -564,21 +517,26 @@ async def get_coinmarketcal(symbol: str) -> list:
 
 @app.get("/fundamental/{symbol}")
 async def get_fundamental(symbol: str):
-    """Полный фундаментальный анализ: Fear&Greed, CoinGecko, новости, события"""
+    """Полный фундаментальный анализ"""
     symbol = symbol.upper()
-
+    # Запускаем параллельно с индивидуальными таймаутами
     fg, cg, news, events = await asyncio.gather(
         get_fear_greed(),
         get_coingecko(symbol),
         get_news(symbol),
         get_coinmarketcal(symbol),
+        return_exceptions=False
     )
+    # Если что-то вернуло исключение — заменяем на пустое
+    if isinstance(fg, Exception): fg = None
+    if isinstance(cg, Exception): cg = None
+    if isinstance(news, Exception): news = []
+    if isinstance(events, Exception): events = []
 
-    # Фундаментальный сигнал — балльная система
     fund_score = 0
     fund_signals = []
 
-    if fg:
+    if fg and not fg.get("error"):
         sig = fg.get("signal", "neutral")
         if sig == "strong_buy":
             fund_score += 2
@@ -593,50 +551,44 @@ async def get_fundamental(symbol: str):
             fund_score -= 2
             fund_signals.append(f"Fear & Greed {fg['value']} (80–100): Экстремальная жадность — высокий риск")
 
-    if cg:
+    if cg and not cg.get("error"):
         if cg["sentiment_up"] > 70:
             fund_score += 1
             fund_signals.append(f"Сообщество позитивно ({cg['sentiment_up']}% за рост)")
         elif cg["sentiment_up"] < 40:
             fund_score -= 1
             fund_signals.append(f"Сообщество негативно ({cg['sentiment_up']}% за рост)")
-        vol_ratio = cg["volume_24h"] / cg["market_cap"] if cg["market_cap"] > 0 else 0
-        if vol_ratio > 0.15:
-            fund_score += 1
-            fund_signals.append("Высокий объём торгов — повышенный интерес к монете")
+        if cg["market_cap"] > 0:
+            vol_ratio = cg["volume_24h"] / cg["market_cap"]
+            if vol_ratio > 0.15:
+                fund_score += 1
+                fund_signals.append("Высокий объём торгов — повышенный интерес")
 
     if news:
         pos = sum(1 for n in news if n["sentiment"] == "positive")
         neg = sum(1 for n in news if n["sentiment"] == "negative")
         if pos > neg:
             fund_score += 1
-            fund_signals.append(f"Позитивный новостной фон ({pos} позитивных из {len(news)})")
+            fund_signals.append(f"Позитивный новостной фон ({pos} из {len(news)} новостей позитивны)")
         elif neg > pos:
             fund_score -= 1
-            fund_signals.append(f"Негативный новостной фон ({neg} негативных из {len(news)})")
+            fund_signals.append(f"Негативный новостной фон ({neg} из {len(news)} новостей негативны)")
 
-    # Предстоящие события — позитивный сигнал если есть важные
-    upcoming = [e for e in events if not e["is_past"] and e["days_diff"] <= 14]
+    upcoming = [e for e in (events or []) if not e["is_past"] and e["days_diff"] <= 14]
     if upcoming:
         fund_score += 1
         fund_signals.append(f"{len(upcoming)} важных событий в ближайшие 14 дней")
 
-    if fund_score >= 2:
-        fund_verdict = "ПОЗИТИВНО"
-        fund_emoji = "🟢"
-    elif fund_score <= -2:
-        fund_verdict = "НЕГАТИВНО"
-        fund_emoji = "🔴"
-    else:
-        fund_verdict = "НЕЙТРАЛЬНО"
-        fund_emoji = "🟡"
+    if fund_score >= 2: fund_verdict = "ПОЗИТИВНО"; fund_emoji = "🟢"
+    elif fund_score <= -2: fund_verdict = "НЕГАТИВНО"; fund_emoji = "🔴"
+    else: fund_verdict = "НЕЙТРАЛЬНО"; fund_emoji = "🟡"
 
     return {
         "symbol": symbol,
         "fear_greed": fg,
         "coingecko": cg,
-        "news": news,
-        "events": events,
+        "news": news or [],
+        "events": events or [],
         "fund_score": fund_score,
         "fund_verdict": fund_verdict,
         "fund_emoji": fund_emoji,
@@ -644,6 +596,201 @@ async def get_fundamental(symbol: str):
     }
 
 
+
+# ── BYBIT ЛИЧНЫЙ КАБИНЕТ ──────────────────────────────────────────────────────
+
+def bybit_sign(params: dict, secret: str) -> dict:
+    """Подписывает запрос к приватному Bybit API"""
+    import time
+    ts = str(int(time.time() * 1000))
+    recv_window = "5000"
+    # Строка для подписи: timestamp + api_key + recv_window + query_string
+    query = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
+    sign_str = ts + BYBIT_API_KEY + recv_window + query
+    signature = hmac.new(secret.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
+    return {
+        "X-BAPI-API-KEY": BYBIT_API_KEY,
+        "X-BAPI-TIMESTAMP": ts,
+        "X-BAPI-RECV-WINDOW": recv_window,
+        "X-BAPI-SIGN": signature,
+    }
+
+
+async def bybit_private(endpoint: str, params: dict = None) -> dict:
+    """Запрос к приватному Bybit API (read-only)"""
+    if not BYBIT_API_KEY or not BYBIT_API_SECRET:
+        return {"retCode": -1, "retMsg": "API ключи не настроены"}
+    params = params or {}
+    headers = bybit_sign(params, BYBIT_API_SECRET)
+    query = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
+    url = f"{BYBIT_BASE}{endpoint}?{query}" if query else f"{BYBIT_BASE}{endpoint}"
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(url, headers=headers)
+        return r.json()
+
+
+@app.get("/portfolio/balance")
+async def get_portfolio_balance():
+    """Реальный баланс кошелька со спота"""
+    if not BYBIT_API_KEY:
+        return {"error": "API ключи не настроены. Добавь BYBIT_API_KEY и BYBIT_API_SECRET на Render."}
+
+    data = await bybit_private("/v5/account/wallet-balance", {"accountType": "UNIFIED"})
+    if data.get("retCode") != 0:
+        # Try SPOT account type
+        data = await bybit_private("/v5/account/wallet-balance", {"accountType": "SPOT"})
+    if data.get("retCode") != 0:
+        return {"error": data.get("retMsg", "Ошибка API")}
+
+    coins = []
+    total_usdt = 0.0
+    try:
+        accounts = data["result"]["list"]
+        for acc in accounts:
+            for coin_data in acc.get("coin", []):
+                sym    = coin_data.get("coin", "")
+                equity = float(coin_data.get("equity") or coin_data.get("walletBalance") or 0)
+                usd_val = float(coin_data.get("usdValue") or 0)
+                if equity < 0.000001:
+                    continue
+                total_usdt += usd_val
+                coins.append({
+                    "symbol": sym,
+                    "balance": round(equity, 6),
+                    "usd_value": round(usd_val, 2),
+                })
+        # Sort by USD value desc
+        coins.sort(key=lambda x: x["usd_value"], reverse=True)
+    except Exception as e:
+        return {"error": f"Ошибка парсинга: {str(e)}"}
+
+    return {
+        "total_usdt": round(total_usdt, 2),
+        "coins": coins,
+    }
+
+
+@app.get("/portfolio/history")
+async def get_trade_history(limit: int = 20):
+    """История сделок"""
+    if not BYBIT_API_KEY:
+        return {"error": "API ключи не настроены"}
+
+    data = await bybit_private("/v5/execution/list", {
+        "category": "spot",
+        "limit": str(min(limit, 50)),
+    })
+    if data.get("retCode") != 0:
+        return {"error": data.get("retMsg", "Ошибка API")}
+
+    trades = []
+    try:
+        for t in data["result"]["list"]:
+            qty   = float(t.get("execQty") or 0)
+            price = float(t.get("execPrice") or 0)
+            fee   = float(t.get("execFee") or 0)
+            side  = t.get("side", "")
+            sym   = t.get("symbol", "").replace("USDT", "")
+            ts    = t.get("execTime", "")
+            # Format timestamp
+            if ts:
+                from datetime import datetime
+                dt = datetime.utcfromtimestamp(int(ts) / 1000)
+                date_str = dt.strftime("%d.%m.%Y %H:%M")
+            else:
+                date_str = "—"
+            trades.append({
+                "symbol": sym,
+                "side": side,
+                "qty": round(qty, 6),
+                "price": round(price, 6),
+                "total_usdt": round(qty * price, 2),
+                "fee": round(fee, 4),
+                "date": date_str,
+            })
+    except Exception as e:
+        return {"error": f"Ошибка парсинга: {str(e)}"}
+
+    return {"trades": trades}
+
+
+@app.get("/portfolio/analyze")
+async def analyze_portfolio():
+    """Анализ портфеля: для каждой монеты — сигнал LUNA"""
+    if not BYBIT_API_KEY:
+        return {"error": "API ключи не настроены"}
+
+    # Получаем баланс
+    balance_data = await get_portfolio_balance()
+    if "error" in balance_data:
+        return balance_data
+
+    coins = [c for c in balance_data["coins"] if c["symbol"] != "USDT" and c["usd_value"] > 0.5]
+
+    # Для каждой монеты делаем технический анализ
+    async def analyze_one(coin_info):
+        sym = coin_info["symbol"]
+        try:
+            df = await get_klines(sym, "60", 200)
+            if df is None or len(df) < 50:
+                return None
+            close  = df["close"]
+            price  = float(close.iloc[-1])
+            rsi    = calc_rsi(close)
+            macd   = calc_macd(close)
+            ema50  = calc_ema(close, 50)
+            ema200 = calc_ema(close, 200)
+            bb     = calc_bollinger(close)
+            signal = determine_signal(rsi, macd, price, ema50, ema200, bb)
+
+            # Считаем P&L относительно средней цены покупки
+            # Используем текущую цену из баланса
+            usd_invested = coin_info["usd_value"]
+            qty          = coin_info["balance"]
+
+            # Простой совет
+            if signal["signal"] == "BUY":
+                advice = "📈 Держи — тренд вверх, сигнал на рост"
+            elif signal["signal"] == "SELL":
+                advice = "⚠️ Подумай о продаже — индикаторы смотрят вниз"
+            else:
+                advice = "⏸ Держи и наблюдай — нет чёткого сигнала"
+
+            return {
+                "symbol": sym,
+                "balance": qty,
+                "usd_value": usd_invested,
+                "price": round(price, 6),
+                "signal": signal["signal"],
+                "confidence": signal["confidence"],
+                "rsi": rsi,
+                "advice": advice,
+                "trend": "up" if price > ema50 > ema200 else "down" if price < ema50 < ema200 else "mixed",
+            }
+        except:
+            return {
+                "symbol": sym,
+                "balance": coin_info["balance"],
+                "usd_value": coin_info["usd_value"],
+                "price": 0,
+                "signal": "HOLD",
+                "confidence": 0,
+                "rsi": 0,
+                "advice": "Не удалось получить анализ",
+                "trend": "mixed",
+            }
+
+    results = await asyncio.gather(*[analyze_one(c) for c in coins])
+    valid   = [r for r in results if r]
+    # Sort: SELL first (нужно действовать), потом HOLD, потом BUY
+    order   = {"SELL": 0, "HOLD": 1, "BUY": 2}
+    valid.sort(key=lambda x: order.get(x["signal"], 3))
+
+    return {
+        "total_usdt": balance_data["total_usdt"],
+        "usdt_balance": next((c["balance"] for c in balance_data["coins"] if c["symbol"] == "USDT"), 0),
+        "positions": valid,
+    }
 
 @app.get("/auth/check/{user_id}")
 async def check_user(user_id: int):
