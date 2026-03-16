@@ -683,6 +683,7 @@ def main_keyboard(user_id: int = 0):
         [InlineKeyboardButton("🆕 Новинки",          callback_data="group_new")],
         [InlineKeyboardButton("💹 Цены топ-5",       callback_data="prices_top"),
          InlineKeyboardButton("💵 Мой бюджет",       callback_data="budget_menu")],
+        [InlineKeyboardButton("💼 Мой портфель",     callback_data="portfolio_main")],
         [InlineKeyboardButton("❓ Помощь",            callback_data="help")],
     ]
     return InlineKeyboardMarkup(rows)
@@ -975,6 +976,130 @@ async def do_fundamental(coin: str, msg, query=None):
     ])
     await msg.edit_text(text, parse_mode="Markdown", reply_markup=kb)
 
+
+async def do_portfolio(msg):
+    """Показывает анализ портфеля Bybit"""
+    await msg.edit_text("💼 Загружаю твой портфель с Bybit...")
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.get(f"{API_URL}/portfolio/analyze")
+            d = r.json()
+    except Exception as e:
+        await msg.edit_text(f"⚠️ Ошибка: {e}")
+        return
+
+    if "error" in d:
+        await msg.edit_text(
+            f"⚠️ {d['error']}\n\n"
+            f"Добавь BYBIT_API_KEY и BYBIT_API_SECRET на Render в сервис luna-crypto-api.",
+            parse_mode="Markdown"
+        )
+        return
+
+    total  = d.get("total_usdt", 0)
+    usdt   = d.get("usdt_balance", 0)
+    positions = d.get("positions", [])
+
+    out = []
+    out.append("💼 *Мой портфель Bybit*")
+    out.append("")
+    out.append(f"💰 Общая стоимость: *${total:.2f}*")
+    out.append(f"💵 Свободный USDT: *${usdt:.2f}*")
+    out.append("")
+
+    if not positions:
+        out.append("_Открытых позиций не найдено_")
+    else:
+        out.append("━━━ Мои монеты ━━━")
+        out.append("")
+        for p in positions:
+            sig_emoji = "🟢" if p["signal"] == "BUY" else "🔴" if p["signal"] == "SELL" else "🟡"
+            trend_emoji = "📈" if p["trend"] == "up" else "📉" if p["trend"] == "down" else "↔"
+            out.append(f"{sig_emoji} *{p['symbol']}* — ${p['usd_value']:.2f}")
+            out.append(f"   Кол-во: {p['balance']} | Цена: ${p['price']}")
+            out.append(f"   RSI: {p['rsi']} {trend_emoji} | Уверенность: {p['confidence']}%")
+            out.append(f"   {p['advice']}")
+            out.append("")
+
+    out.append("_Данные обновляются в реальном времени с Bybit_")
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📋 История сделок",   callback_data="portfolio_history")],
+        [InlineKeyboardButton("💰 Только баланс",    callback_data="portfolio_balance")],
+        [InlineKeyboardButton("🏠 Главное меню",     callback_data="back_main")],
+    ])
+    await msg.edit_text("\n".join(out), parse_mode="Markdown", reply_markup=kb)
+
+
+async def do_balance(msg):
+    """Показывает баланс кошелька"""
+    await msg.edit_text("💰 Загружаю баланс кошелька...")
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get(f"{API_URL}/portfolio/balance")
+            d = r.json()
+    except Exception as e:
+        await msg.edit_text(f"⚠️ Ошибка: {e}")
+        return
+
+    if "error" in d:
+        await msg.edit_text(f"⚠️ {d['error']}")
+        return
+
+    out = []
+    out.append("💰 *Баланс кошелька Bybit*")
+    out.append("")
+    out.append(f"💵 Итого: *${d['total_usdt']:.2f} USDT*")
+    out.append("")
+    out.append("━━━ Монеты ━━━")
+    for coin in d.get("coins", []):
+        out.append(f"• *{coin['symbol']}*: {coin['balance']} (≈ ${coin['usd_value']:.2f})")
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Анализ портфеля",  callback_data="portfolio_main")],
+        [InlineKeyboardButton("📋 История сделок",   callback_data="portfolio_history")],
+        [InlineKeyboardButton("🏠 Главное меню",     callback_data="back_main")],
+    ])
+    await msg.edit_text("\n".join(out), parse_mode="Markdown", reply_markup=kb)
+
+
+async def do_history(msg):
+    """Показывает историю сделок"""
+    await msg.edit_text("📋 Загружаю историю сделок...")
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get(f"{API_URL}/portfolio/history?limit=15")
+            d = r.json()
+    except Exception as e:
+        await msg.edit_text(f"⚠️ Ошибка: {e}")
+        return
+
+    if "error" in d:
+        await msg.edit_text(f"⚠️ {d['error']}")
+        return
+
+    trades = d.get("trades", [])
+    out = []
+    out.append("📋 *История сделок (последние 15)*")
+    out.append("")
+
+    if not trades:
+        out.append("_Сделок не найдено_")
+    else:
+        for t in trades:
+            side_emoji = "🟢" if t["side"].upper() == "BUY" else "🔴"
+            side_ru    = "Купил" if t["side"].upper() == "BUY" else "Продал"
+            out.append(f"{side_emoji} *{t['symbol']}* — {side_ru}")
+            out.append(f"   {t['qty']} по ${t['price']} = *${t['total_usdt']}*")
+            out.append(f"   📅 {t['date']} | Комиссия: ${t['fee']}")
+            out.append("")
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Анализ портфеля", callback_data="portfolio_main")],
+        [InlineKeyboardButton("🏠 Главное меню",    callback_data="back_main")],
+    ])
+    await msg.edit_text("\n".join(out), parse_mode="Markdown", reply_markup=kb)
+
 async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1036,6 +1161,21 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown",
             reply_markup=interval_keyboard(coin)
         )
+
+    elif data == "portfolio_main":
+        loading = await query.message.reply_text("💼 Загружаю портфель...")
+        await do_portfolio(loading)
+        return
+
+    elif data == "portfolio_balance":
+        loading = await query.message.reply_text("💰 Загружаю баланс...")
+        await do_balance(loading)
+        return
+
+    elif data == "portfolio_history":
+        loading = await query.message.reply_text("📋 Загружаю историю...")
+        await do_history(loading)
+        return
 
     elif data.startswith("fundamental_"):
         coin = data.replace("fundamental_", "")
