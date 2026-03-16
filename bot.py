@@ -729,6 +729,7 @@ def after_analysis_keyboard(coin: str):
          InlineKeyboardButton("🕐 1ч",  callback_data=f"analyze_{coin}_60"),
          InlineKeyboardButton("🕓 4ч",  callback_data=f"analyze_{coin}_240"),
          InlineKeyboardButton("📅 1д",  callback_data=f"analyze_{coin}_D")],
+        [InlineKeyboardButton("🏦 Фундаментал", callback_data=f"fundamental_{coin}")],
         [InlineKeyboardButton("📋 Другая монета", callback_data="back_main"),
          InlineKeyboardButton("💹 Все цены",      callback_data="prices_fave")],
     ])
@@ -873,6 +874,106 @@ async def do_analysis(update: Update, ctx: ContextTypes.DEFAULT_TYPE, coin: str,
         parse_mode="Markdown",
         reply_markup=after_analysis_keyboard(coin)
     )
+
+
+async def do_fundamental(coin: str, msg, query=None):
+    """Загружает и форматирует полный фундаментальный анализ"""
+    await msg.edit_text(f"🏦 Загружаю фундаментальный анализ {coin}...")
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            r = await client.get(f"{API_BASE}/fundamental/{coin}")
+            d = r.json()
+    except Exception as e:
+        await msg.edit_text(f"⚠️ Ошибка загрузки: {e}")
+        return
+
+    fg      = d.get("fear_greed")
+    cg      = d.get("coingecko")
+    news    = d.get("news", [])
+    events  = d.get("events", [])
+    verdict = d.get("fund_verdict", "НЕЙТРАЛЬНО")
+    ev      = d.get("fund_emoji", "🟡")
+    signals = d.get("fund_signals", [])
+    score   = d.get("fund_score", 0)
+
+    out = []
+    out.append(f"🏦 *Фундаментальный анализ {coin}/USDT*")
+    out.append("")
+    out.append(f"━━━ Общий сигнал ━━━")
+    out.append(f"{ev} *{verdict}* (балл: {score:+d})")
+    for s in signals:
+        out.append(f"• {s}")
+    out.append("")
+
+    # Fear & Greed
+    if fg:
+        zone  = fg.get("zone", "")
+        out.append("━━━ 😱 Страх и Жадность (Fear & Greed) ━━━")
+        out.append(f"{fg['emoji']} *{fg['value']}/100* — Зона {zone}")
+        out.append(f"_{fg['ru']}_")
+        out.append("")
+        out.append("_Шкала: 0–20 😱Экстр.страх | 20–45 😟Страх | 45–55 😐Нейтрально | 55–80 😊Жадность | 80–100 🤑Экстр.жадность_")
+        out.append("")
+
+    # CoinGecko
+    if cg:
+        out.append("━━━ 📊 Рыночные данные ━━━")
+        out.append(f"🏅 Рейтинг: #{cg['rank']} по капитализации")
+        out.append(f"💰 Капитализация: {cg['market_cap_fmt']}")
+        out.append(f"📈 Объём 24ч: {cg['volume_fmt']}")
+        chg_emoji = "🟢" if cg['cap_change_24h'] >= 0 else "🔴"
+        out.append(f"{chg_emoji} Изм. капитал. 24ч: {cg['cap_change_24h']:+.2f}%")
+        out.append(f"🏆 Исторический максимум: ${cg['ath']:,.2f} ({cg['ath_change_pct']:+.1f}% от пика)")
+        sent_emoji = "🟢" if cg['sentiment_up'] > 55 else "🔴" if cg['sentiment_up'] < 45 else "🟡"
+        out.append(f"{sent_emoji} Настроение сообщества: {cg['sentiment_up']}% за рост / {cg['sentiment_down']}% за падение")
+        out.append("")
+
+    # Новости
+    if news:
+        out.append("━━━ 📰 Последние новости ━━━")
+        for n in news[:4]:
+            se = "🟢" if n["sentiment"] == "positive" else "🔴" if n["sentiment"] == "negative" else "⚪"
+            out.append(f"{se} {n['title'][:75]}")
+            out.append(f"   _📅 {n['published']}_")
+        out.append("")
+
+    # События
+    if events:
+        past   = [e for e in events if e["is_past"]]
+        future = [e for e in events if not e["is_past"]]
+
+        if future:
+            out.append("━━━ 🔮 Предстоящие события ━━━")
+            for e in future[:4]:
+                days = e["days_diff"]
+                if days == 0:   when = "сегодня"
+                elif days == 1: when = "завтра"
+                else:           when = f"через {days} дн."
+                conf = f" ({e['confidence']}%)" if e['confidence'] else ""
+                cat  = f" [{e['category']}]" if e['category'] else ""
+                out.append(f"📌 *{e['date']}* ({when}){conf}{cat}")
+                out.append(f"   {e['title']}")
+            out.append("")
+
+        if past:
+            out.append("━━━ 📋 Прошедшие события ━━━")
+            for e in past[:3]:
+                out.append(f"✅ *{e['date']}* — {e['title'][:60]}")
+            out.append("")
+
+    elif not events:
+        out.append("📅 _Событий в календаре не найдено_")
+        out.append("")
+
+    out.append("_Источники: CoinGecko · CryptoPanic · CoinMarketCal · Alternative.me_")
+
+    text = "\n".join(out)
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Тех. анализ", callback_data=f"analyze_{coin}_60")],
+        [InlineKeyboardButton("🔍 Все таймфреймы", callback_data=f"multianalyze_{coin}")],
+        [InlineKeyboardButton("📋 Другая монета", callback_data="back_main")],
+    ])
+    await msg.edit_text(text, parse_mode="Markdown", reply_markup=kb)
 
 async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
