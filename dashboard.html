@@ -219,6 +219,30 @@ html,body{background:var(--bg);color:var(--text);font-family:'Syne',sans-serif;m
 .auth-sub{font-size:13px;color:var(--muted);text-align:center;max-width:280px;line-height:1.6;}
 .auth-denied{background:rgba(255,77,106,.1);border:1px solid rgba(255,77,106,.3);border-radius:12px;padding:16px 20px;text-align:center;color:var(--red);font-size:14px;font-weight:700;max-width:300px;}
 .auth-spinner{width:32px;height:32px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;}
+
+/* FUNDAMENTAL */
+.fg-bar-wrap{height:12px;background:linear-gradient(to right,#4db8ff,#f7c948,#6b7299,#ff9f43,#ff4d6a);border-radius:6px;margin:8px 0;position:relative;}
+.fg-pointer{position:absolute;top:-4px;width:4px;height:20px;background:#fff;border-radius:2px;box-shadow:0 0 6px rgba(0,0,0,.5);transition:left .6s;}
+.fg-labels{display:flex;justify-content:space-between;font-size:9px;color:var(--muted);}
+.fund-section{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:10px;}
+.fund-sec-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin-bottom:10px;}
+.news-item{padding:9px 0;border-bottom:1px solid var(--border);}
+.news-item:last-child{border-bottom:none;}
+.news-title{font-size:12px;font-weight:600;line-height:1.4;margin-bottom:3px;}
+.news-meta{font-size:10px;color:var(--muted);font-family:'Space Mono',monospace;}
+.event-item{padding:9px 0;border-bottom:1px solid var(--border);}
+.event-item:last-child{border-bottom:none;}
+.event-date{font-size:11px;font-weight:700;font-family:'Space Mono',monospace;margin-bottom:2px;}
+.event-title{font-size:12px;line-height:1.4;}
+.event-meta{font-size:10px;color:var(--muted);margin-top:2px;}
+.event-past{opacity:.6;}
+.cg-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.cg-item{background:var(--bg3);border-radius:10px;padding:10px;}
+.cg-label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px;}
+.cg-val{font-size:15px;font-weight:800;font-family:'Space Mono',monospace;}
+.sent-bar{height:8px;border-radius:4px;overflow:hidden;display:flex;margin-top:6px;}
+.sent-pos{background:var(--green);}
+.sent-neg{background:var(--red);}
 </style>
 </head>
 <body>
@@ -246,6 +270,7 @@ html,body{background:var(--bg);color:var(--text);font-family:'Syne',sans-serif;m
   <div class="tab active" id="tab-btn-analysis" onclick="switchTab('analysis')">📊 Анализ</div>
   <div class="tab" id="tab-btn-screener" onclick="switchTab('screener')">🔍 Скринер</div>
   <div class="tab" id="tab-btn-futures" onclick="switchTab('futures')">⚡ Фьючерсы</div>
+  <div class="tab" id="tab-btn-fundamental" onclick="switchTab('fundamental')">🏦 Фундаментал</div>
 </div>
 
 <!-- ANALYSIS TAB -->
@@ -274,6 +299,14 @@ html,body{background:var(--bg);color:var(--text);font-family:'Syne',sans-serif;m
     <div class="flt-btn" id="flt-ALL" onclick="setFilter('ALL',this)">📋 Все монеты</div>
   </div>
   <div id="screenerContent"><div class="loading"><div class="spin"></div>Анализирую монеты...</div></div>
+</div>
+
+<!-- FUNDAMENTAL TAB -->
+<div id="tab-fundamental" style="display:none">
+  <div class="selectors" style="padding-top:10px">
+    <div class="coins-row" id="fundCoinsRow"></div>
+  </div>
+  <div id="fundamentalContent"><div class="loading"><div class="spin"></div>Загружаю...</div></div>
 </div>
 
 <!-- FUTURES TAB -->
@@ -359,15 +392,15 @@ window.onload = function() {
   checkAuth().then(function() {
     var screen = document.getElementById('authScreen');
     if (!screen || screen.style.display === 'none') {
-      buildCoins(); buildTf(); buildFutCoins();
-      loadAnalysis(); loadScreener(); loadFutures();
+      buildCoins(); buildTf(); buildFutCoins(); buildFundCoins();
+      loadAnalysis(); loadScreener(); loadFutures(); loadFundamental();
     }
   });
 };
 
 function switchTab(tab) {
   activeTab = tab;
-  ['analysis','screener','futures'].forEach(function(t) {
+  ['analysis','screener','futures','fundamental'].forEach(function(t) {
     document.getElementById('tab-' + t).style.display = t === tab ? 'block' : 'none';
     document.getElementById('tab-btn-' + t).classList.toggle('active', t === tab);
   });
@@ -783,6 +816,176 @@ function drawChart(klines, currentPrice) {
     }
   };
   chartInst.draw();
+}
+
+
+// ── FUNDAMENTAL ───────────────────────────────────────────────────────────────
+var fundCoin = 'ETH';
+
+function buildFundCoins() {
+  var row = document.getElementById('fundCoinsRow');
+  COINS.forEach(function(c2) {
+    var b = document.createElement('div');
+    b.className = 'coin-btn' + (c2 === fundCoin ? ' active' : '');
+    b.textContent = c2;
+    b.onclick = function() {
+      fundCoin = c2;
+      row.querySelectorAll('.coin-btn').forEach(function(x){ x.classList.remove('active'); });
+      b.classList.add('active');
+      loadFundamental();
+    };
+    row.appendChild(b);
+  });
+}
+
+async function loadFundamental() {
+  document.getElementById('fundamentalContent').innerHTML = '<div class="loading"><div class="spin"></div>Загружаю фундаментальный анализ ' + fundCoin + '...</div>';
+  try {
+    var r = await fetch(API + '/fundamental/' + fundCoin);
+    var d = await r.json();
+    renderFundamental(d);
+  } catch(e) {
+    document.getElementById('fundamentalContent').innerHTML = '<div class="errmsg">Ошибка: ' + e.message + '</div>';
+  }
+}
+
+function renderFundamental(d) {
+  var fg = d.fear_greed, cg = d.coingecko, news = d.news || [], events = d.events || [];
+  var verdict = d.fund_verdict, emv = d.fund_emoji, score = d.fund_score;
+  var signals = d.fund_signals || [];
+
+  var sigCls = verdict === 'ПОЗИТИВНО' ? 'buy' : verdict === 'НЕГАТИВНО' ? 'sell' : 'hold';
+  var html = '';
+
+  // Signal card
+  html += '<div class="signal-card ' + sigCls + '" style="margin:14px 16px">';
+  html += '<div class="signal-top"><div class="signal-icon-wrap"><div class="signal-emoji">' + emv + '</div>';
+  html += '<div><div class="signal-verdict ' + sigCls + '">' + verdict + '</div>';
+  html += '<div class="signal-why">' + d.symbol + ' · Фундаментальный анализ · Балл: ' + (score >= 0 ? '+' : '') + score + '</div></div></div></div>';
+  if (signals.length) {
+    html += '<div style="padding:10px 18px 14px">';
+    signals.forEach(function(s){ html += '<div style="font-size:12px;padding:3px 0;color:var(--muted)">• ' + s + '</div>'; });
+    html += '</div>';
+  }
+  html += '</div>';
+
+  // Fear & Greed
+  if (fg) {
+    var fgPtr = Math.min(97, Math.max(3, fg.value));
+    var fgColor = fg.value <= 20 ? '#4db8ff' : fg.value <= 45 ? '#74b9ff' : fg.value <= 55 ? '#6b7299' : fg.value <= 80 ? '#ff9f43' : '#ff4d6a';
+    var zoneName = fg.value <= 20 ? 'Экстремальный страх' : fg.value <= 45 ? 'Страх' : fg.value <= 55 ? 'Нейтрально' : fg.value <= 80 ? 'Жадность' : 'Экстремальная жадность';
+    var zoneRange = fg.value <= 20 ? '0–20' : fg.value <= 45 ? '20–45' : fg.value <= 55 ? '45–55' : fg.value <= 80 ? '55–80' : '80–100';
+    var zoneAction = fg.value <= 20 ? 'Лучший момент для покупки — все в панике продают.' :
+                     fg.value <= 45 ? 'Хорошая зона для осторожного входа.' :
+                     fg.value <= 55 ? 'Нет явного сигнала. Смотри на другие индикаторы.' :
+                     fg.value <= 80 ? 'Рынок разогрет. Покупать осторожно — возможна коррекция.' :
+                                      'Все в эйфории. Высокий риск обвала. Лучше подождать.';
+    html += '<div class="section"><div class="sec-head">😱 Индекс Страха и Жадности</div>';
+    html += '<div class="fund-section">';
+    html += '<div style="display:flex;align-items:center;gap:16px;margin-bottom:14px">';
+    html += '<div style="font-size:56px;font-weight:800;font-family:'Space Mono',monospace;color:' + fgColor + ';line-height:1">' + fg.value + '</div>';
+    html += '<div><div style="font-size:17px;font-weight:800;color:' + fgColor + '">' + fg.emoji + ' ' + zoneName + '</div>';
+    html += '<div style="font-size:12px;color:var(--muted);margin-top:3px">Зона ' + zoneRange + '</div></div></div>';
+    html += '<div style="position:relative;margin-bottom:5px">';
+    html += '<div style="display:flex;height:14px;border-radius:7px;overflow:hidden">';
+    html += '<div style="width:20%;background:#4db8ff"></div>';
+    html += '<div style="width:25%;background:#74b9ff"></div>';
+    html += '<div style="width:10%;background:#6b7299"></div>';
+    html += '<div style="width:25%;background:#ff9f43"></div>';
+    html += '<div style="width:20%;background:#ff4d6a"></div>';
+    html += '</div>';
+    html += '<div style="position:absolute;top:-3px;left:' + fgPtr + '%;transform:translateX(-50%);width:4px;height:20px;background:#fff;border-radius:2px;box-shadow:0 0 8px rgba(0,0,0,.6)"></div>';
+    html += '</div>';
+    html += '<div style="display:flex;font-size:9px;color:var(--muted);margin-bottom:12px">';
+    html += '<div style="width:20%;text-align:center">😱<br>0–20</div>';
+    html += '<div style="width:25%;text-align:center">😟<br>20–45</div>';
+    html += '<div style="width:10%;text-align:center">😐<br>45–55</div>';
+    html += '<div style="width:25%;text-align:center">😊<br>55–80</div>';
+    html += '<div style="width:20%;text-align:center">🤑<br>80–100</div>';
+    html += '</div>';
+    html += '<div style="background:rgba(255,255,255,.05);border-radius:10px;padding:10px 12px;font-size:12px;line-height:1.5">';
+    html += '<strong style="color:' + fgColor + '">Что это значит: </strong>' + zoneAction;
+    html += '</div></div></div>';
+  }
+
+  // CoinGecko
+  if (cg) {
+    html += '<div class="section"><div class="sec-head">📊 Рыночные данные (CoinGecko)</div>';
+    html += '<div class="fund-section">';
+    html += '<div class="cg-grid">';
+    html += '<div class="cg-item"><div class="cg-label">Рейтинг</div><div class="cg-val">#' + cg.rank + '</div></div>';
+    html += '<div class="cg-item"><div class="cg-label">Капитализация</div><div class="cg-val">' + cg.market_cap_fmt + '</div></div>';
+    html += '<div class="cg-item"><div class="cg-label">Объём 24ч</div><div class="cg-val">' + cg.volume_fmt + '</div></div>';
+    var capChgCls = cg.cap_change_24h >= 0 ? 'up' : 'down';
+    html += '<div class="cg-item"><div class="cg-label">Изм. кап. 24ч</div><div class="cg-val ' + capChgCls + '">' + (cg.cap_change_24h >= 0 ? '+' : '') + cg.cap_change_24h + '%</div></div>';
+    html += '<div class="cg-item" style="grid-column:1/-1"><div class="cg-label">Исторический максимум (ATH)</div><div class="cg-val">' + fp(cg.ath) + ' <span style="font-size:12px;color:var(--red)">' + cg.ath_change_pct + '% от пика</span></div></div>';
+    html += '</div>';
+    // Sentiment bar
+    var sup = cg.sentiment_up || 0, sdn = cg.sentiment_down || 0;
+    var sentCls = sup > 55 ? 'up' : sup < 45 ? 'down' : 'neu';
+    html += '<div style="margin-top:12px"><div class="cg-label">Настроение сообщества</div>';
+    html += '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span class="up">🟢 ' + sup + '% за рост</span><span class="down">🔴 ' + sdn + '% за падение</span></div>';
+    html += '<div class="sent-bar"><div class="sent-pos" style="width:' + sup + '%"></div><div class="sent-neg" style="width:' + sdn + '%"></div></div></div>';
+    html += '</div></div>';
+  }
+
+  // News
+  if (news.length) {
+    html += '<div class="section"><div class="sec-head">📰 Новости (CryptoPanic)</div>';
+    html += '<div class="fund-section">';
+    news.slice(0,5).forEach(function(n) {
+      var se = n.sentiment === 'positive' ? '🟢' : n.sentiment === 'negative' ? '🔴' : '⚪';
+      html += '<div class="news-item">';
+      html += '<div class="news-title">' + se + ' ' + n.title + '</div>';
+      html += '<div class="news-meta">📅 ' + n.published + ' · 👍' + n.votes_pos + ' 👎' + n.votes_neg + '</div>';
+      html += '</div>';
+    });
+    html += '</div></div>';
+  }
+
+  // Events
+  var future = events.filter(function(e){ return !e.is_past; });
+  var past   = events.filter(function(e){ return e.is_past; });
+
+  if (future.length || past.length) {
+    html += '<div class="section"><div class="sec-head">📅 Календарь событий (CoinMarketCal)</div>';
+
+    if (future.length) {
+      html += '<div class="fund-section">';
+      html += '<div style="font-size:11px;font-weight:700;color:var(--accent);margin-bottom:8px">🔮 ПРЕДСТОЯЩИЕ</div>';
+      future.slice(0,5).forEach(function(e) {
+        var when = e.days_diff === 0 ? 'сегодня' : e.days_diff === 1 ? 'завтра' : 'через ' + e.days_diff + ' дн.';
+        var conf = e.confidence ? ' · ' + e.confidence + '% уверенность' : '';
+        var cat  = e.category ? ' · ' + e.category : '';
+        html += '<div class="event-item">';
+        html += '<div class="event-date">📌 ' + e.date + ' (' + when + ')' + conf + '</div>';
+        html += '<div class="event-title">' + e.title + '</div>';
+        if (cat) html += '<div class="event-meta">' + cat + '</div>';
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+
+    if (past.length) {
+      html += '<div class="fund-section event-past">';
+      html += '<div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:8px">✅ ПРОШЕДШИЕ</div>';
+      past.slice(0,3).forEach(function(e) {
+        html += '<div class="event-item">';
+        html += '<div class="event-date">📋 ' + e.date + '</div>';
+        html += '<div class="event-title">' + e.title + '</div>';
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+    html += '</div>';
+  } else {
+    html += '<div class="section"><div class="sec-head">📅 Календарь событий</div>';
+    html += '<div class="fund-section" style="color:var(--muted);font-size:13px;text-align:center">Событий в календаре не найдено</div></div>';
+  }
+
+  html += '<div style="padding:0 16px 8px;font-size:10px;color:var(--muted)">Источники: CoinGecko · CryptoPanic · CoinMarketCal · Alternative.me</div>';
+  html += '<div class="pb"></div>';
+  document.getElementById('fundamentalContent').innerHTML = html;
 }
 
 setInterval(function(){ if(activeTab==='analysis') loadAnalysis(); }, 60000);
