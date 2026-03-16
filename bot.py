@@ -881,7 +881,7 @@ async def do_fundamental(coin: str, msg, query=None):
     await msg.edit_text(f"🏦 Загружаю фундаментальный анализ {coin}...")
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            r = await client.get(f"{API_BASE}/fundamental/{coin}")
+            r = await client.get(f"{API_URL}/fundamental/{coin}")
             d = r.json()
     except Exception as e:
         await msg.edit_text(f"⚠️ Ошибка загрузки: {e}")
@@ -1036,6 +1036,12 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown",
             reply_markup=interval_keyboard(coin)
         )
+
+    elif data.startswith("fundamental_"):
+        coin = data.replace("fundamental_", "")
+        loading = await query.message.reply_text(f"🏦 Загружаю фундаментальный анализ {coin}...")
+        await do_fundamental(coin, loading, query)
+        return
 
     elif data.startswith("multianalyze_"):
         coin = data.replace("multianalyze_", "")
