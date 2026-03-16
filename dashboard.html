@@ -243,6 +243,36 @@ html,body{background:var(--bg);color:var(--text);font-family:'Syne',sans-serif;m
 .sent-bar{height:8px;border-radius:4px;overflow:hidden;display:flex;margin-top:6px;}
 .sent-pos{background:var(--green);}
 .sent-neg{background:var(--red);}
+
+.port-total{background:linear-gradient(135deg,rgba(247,166,0,.15),rgba(247,166,0,.05));border:1px solid rgba(247,166,0,.3);border-radius:14px;padding:16px;margin-bottom:12px;text-align:center;}
+.port-total-val{font-size:36px;font-weight:800;font-family:'Space Mono',monospace;color:var(--accent);}
+.port-total-sub{font-size:12px;color:var(--muted);margin-top:4px;}
+.port-item{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:10px;}
+.port-item.sell{border-left:4px solid var(--red);}
+.port-item.buy{border-left:4px solid var(--green);}
+.port-item.hold{border-left:4px solid var(--yellow);}
+.port-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;}
+.port-sym{font-size:18px;font-weight:800;}
+.port-val{font-size:16px;font-weight:800;font-family:'Space Mono',monospace;text-align:right;}
+.port-val-sub{font-size:11px;color:var(--muted);text-align:right;margin-top:2px;}
+.port-advice{font-size:12px;font-weight:700;margin-top:8px;padding:8px 10px;border-radius:8px;}
+.port-advice.buy{background:rgba(0,200,150,.1);color:var(--green);}
+.port-advice.sell{background:rgba(255,77,106,.1);color:var(--red);}
+.port-advice.hold{background:rgba(247,201,72,.1);color:var(--yellow);}
+.port-stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:8px;}
+.port-stat{background:var(--bg3);border-radius:8px;padding:7px;text-align:center;}
+.port-stat-label{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px;}
+.port-stat-val{font-size:13px;font-weight:800;font-family:'Space Mono',monospace;}
+.hist-trade{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;}
+.hist-left{}
+.hist-side{font-size:13px;font-weight:800;margin-bottom:2px;}
+.hist-detail{font-size:11px;color:var(--muted);}
+.hist-right{text-align:right;}
+.hist-total{font-size:15px;font-weight:800;font-family:'Space Mono',monospace;}
+.hist-date{font-size:10px;color:var(--muted);margin-top:2px;font-family:'Space Mono',monospace;}
+.port-subtabs{display:flex;gap:6px;padding:10px 16px;background:var(--bg2);border-bottom:1px solid var(--border);}
+.port-stab{flex:1;padding:7px 0;border-radius:8px;text-align:center;background:var(--bg3);border:1px solid var(--border);color:var(--muted);cursor:pointer;font-size:12px;font-weight:700;transition:all .15s;}
+.port-stab.active{background:rgba(247,166,0,.15);border-color:var(--accent);color:var(--accent);}
 </style>
 </head>
 <body>
@@ -271,6 +301,7 @@ html,body{background:var(--bg);color:var(--text);font-family:'Syne',sans-serif;m
   <div class="tab" id="tab-btn-screener" onclick="switchTab('screener')">🔍 Скринер</div>
   <div class="tab" id="tab-btn-futures" onclick="switchTab('futures')">⚡ Фьючерсы</div>
   <div class="tab" id="tab-btn-fundamental" onclick="switchTab('fundamental')">🏦 Фундаментал</div>
+  <div class="tab" id="tab-btn-portfolio" onclick="switchTab('portfolio')">💼 Портфель</div>
 </div>
 
 <!-- ANALYSIS TAB -->
@@ -309,6 +340,11 @@ html,body{background:var(--bg);color:var(--text);font-family:'Syne',sans-serif;m
   <div id="fundamentalContent"><div class="loading"><div class="spin"></div>Загружаю...</div></div>
 </div>
 
+<!-- PORTFOLIO TAB -->
+<div id="tab-portfolio" style="display:none">
+  <div id="portfolioContent"><div class="loading"><div class="spin"></div>Загружаю портфель...</div></div>
+</div>
+
 <!-- FUTURES TAB -->
 <div id="tab-futures" style="display:none">
   <div class="fut-intro">
@@ -339,39 +375,45 @@ async function checkAuth() {
   var spinner = document.getElementById('authSpinner');
   var msg = document.getElementById('authMsg');
 
-  try {
-    var tg = window.Telegram && window.Telegram.WebApp;
+  // Получаем user_id сразу — до любых запросов
+  var tg = window.Telegram && window.Telegram.WebApp;
+  var uid = 0;
+  if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) {
+    uid = tg.initDataUnsafe.user.id;
+  }
 
-    if (!tg) {
-      showDenied(screen, spinner, msg);
-      return;
+  if (!tg || uid === 0) {
+    showDenied(screen, spinner, msg);
+    return;
+  }
+
+  // Пробуем до 3 раз с увеличивающимся таймаутом (сервер может спать)
+  for (var attempt = 1; attempt <= 3; attempt++) {
+    try {
+      var timeoutMs = attempt * 10000; // 10с, 20с, 30с
+      msg.textContent = attempt === 1 ? 'Проверяю доступ...' : 'Сервер просыпается... попытка ' + attempt + '/3';
+      var controller = new AbortController();
+      var timer = setTimeout(function(){ controller.abort(); }, timeoutMs);
+      var resp = await fetch(AUTH_API + '/auth/check/' + uid, {signal: controller.signal});
+      clearTimeout(timer);
+      var result = await resp.json();
+      if (result.ok) {
+        screen.style.display = 'none';
+        return;
+      } else {
+        showDenied(screen, spinner, msg);
+        return;
+      }
+    } catch(e) {
+      if (attempt < 3) {
+        await new Promise(function(res){ setTimeout(res, 2000); });
+        continue;
+      }
+      // Все попытки исчерпаны
+      spinner.style.display = 'none';
+      msg.innerHTML = 'Сервер не отвечает. Попробуй через минуту.<br><br>'
+        + '<span style="cursor:pointer;color:var(--accent);font-weight:700;font-size:15px" onclick="checkAuth()">↻ Попробовать снова</span>';
     }
-
-    // Получаем user_id из Telegram WebApp
-    var uid = 0;
-    if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
-      uid = tg.initDataUnsafe.user.id;
-    }
-
-    if (uid === 0) {
-      showDenied(screen, spinner, msg);
-      return;
-    }
-
-    // Простая и надёжная проверка по user_id
-    var resp = await fetch(AUTH_API + '/auth/check/' + uid);
-    var result = await resp.json();
-
-    if (result.ok) {
-      screen.style.display = 'none';
-    } else {
-      showDenied(screen, spinner, msg);
-    }
-
-  } catch(e) {
-    spinner.style.display = 'none';
-    msg.innerHTML = 'Сервер просыпается...<br><br>'
-      + '<span style="cursor:pointer;color:var(--accent);font-weight:700;font-size:15px" onclick="checkAuth()">↻ Попробовать снова</span>';
   }
 }
 
@@ -400,10 +442,12 @@ window.onload = function() {
 
 function switchTab(tab) {
   activeTab = tab;
-  ['analysis','screener','futures','fundamental'].forEach(function(t) {
+  ['analysis','screener','futures','fundamental','portfolio'].forEach(function(t) {
     document.getElementById('tab-' + t).style.display = t === tab ? 'block' : 'none';
     document.getElementById('tab-btn-' + t).classList.toggle('active', t === tab);
   });
+  if (tab === 'portfolio' && document.getElementById('portInner') === null) { loadPortfolio(); }
+  else if (tab === 'portfolio') { loadPortfolio(); }
 }
 
 function buildCoins() {
@@ -702,7 +746,7 @@ function renderScreener() {
       var lbl = item.signal === 'BUY' ? '🟢 ПОКУПАТЬ' : item.signal === 'SELL' ? '🔴 НЕ ПОКУПАТЬ' : '🟡 ПОДОЖДАТЬ';
       var chgCls = item.change_24h > 0 ? 'up' : item.change_24h < 0 ? 'down' : 'neu';
       var trendIcon = item.trend === 'up' ? '📈 Рост' : item.trend === 'down' ? '📉 Падение' : '↔ Боковик';
-      html += '<div class="scr-item" onclick="jumpToAnalysis(\'' + item.symbol + '\')">';
+      html += '<div class="scr-item" data-sym="' + item.symbol + '">';
       html += '<div><div class="scr-sym">' + item.symbol + '</div><div class="scr-stats">RSI ' + item.rsi + ' · ' + trendIcon + '</div></div>';
       html += '<div class="scr-middle"><div class="scr-price">' + fp(item.price) + '</div><div class="scr-chg ' + chgCls + '">' + (item.change_24h >= 0 ? '+' : '') + item.change_24h.toFixed(2) + '%</div></div>';
       html += '<div class="scr-right"><div class="scr-badge ' + cls + '">' + lbl + '</div><div class="scr-conf">' + item.confidence + '% уверенность</div></div>';
@@ -711,6 +755,10 @@ function renderScreener() {
   }
   html += '</div><div class="pb"></div>';
   document.getElementById('screenerContent').innerHTML = html;
+    // Add click handlers
+    document.querySelectorAll('.scr-item').forEach(function(el){
+      el.onclick = function(){ jumpToAnalysis(el.getAttribute('data-sym')); };
+    });
 }
 
 function jumpToAnalysis(sym) {
@@ -819,6 +867,142 @@ function drawChart(klines, currentPrice) {
 }
 
 
+
+// ── PORTFOLIO ─────────────────────────────────────────────────────────────────
+var portSubTab = 'analyze';
+
+function setPortSubTab(el, tabIdx) {
+  document.querySelectorAll('.port-stab').forEach(function(b){ b.classList.remove('active'); });
+  el.classList.add('active');
+  if (tabIdx === 0) loadPortfolioAnalyze();
+  else if (tabIdx === 1) loadPortfolioBalance();
+  else loadPortfolioHistory();
+}
+
+async function loadPortfolio() {
+  var content = document.getElementById('portfolioContent');
+  var d0 = document.createElement('div');
+  d0.className = 'port-subtabs';
+
+  var b0 = document.createElement('div');
+  b0.className = 'port-stab active';
+  b0.textContent = 'Анализ';
+  b0.onclick = function(){ setPortSubTab(b0, 0); };
+
+  var b1 = document.createElement('div');
+  b1.className = 'port-stab';
+  b1.textContent = 'Баланс';
+  b1.onclick = function(){ setPortSubTab(b1, 1); };
+
+  var b2 = document.createElement('div');
+  b2.className = 'port-stab';
+  b2.textContent = 'История';
+  b2.onclick = function(){ setPortSubTab(b2, 2); };
+
+  d0.appendChild(b0); d0.appendChild(b1); d0.appendChild(b2);
+  var inner = document.createElement('div');
+  inner.id = 'portInner';
+  content.innerHTML = '';
+  content.appendChild(d0);
+  content.appendChild(inner);
+  loadPortfolioAnalyze();
+}
+
+async function loadPortfolioAnalyze() {
+  document.getElementById('portInner').innerHTML = '<div class="loading"><div class="spin"></div>Анализирую портфель...</div>';
+  try {
+    var r = await fetch(API + '/portfolio/analyze');
+    var d = await r.json();
+    if (d.error) {
+      document.getElementById('portInner').innerHTML = '<div class="errmsg">' + d.error + '<br><br>Добавь BYBIT_API_KEY и BYBIT_API_SECRET на Render.</div>';
+      return;
+    }
+    var html = '<div style="padding:14px 16px">';
+    html += '<div class="port-total">';
+    html += '<div class="port-total-val">$' + d.total_usdt.toFixed(2) + '</div>';
+    html += '<div class="port-total-sub">Общая стоимость · Свободно USDT: $' + (d.usdt_balance || 0).toFixed(2) + '</div>';
+    html += '</div>';
+    if (!d.positions || !d.positions.length) {
+      html += '<div style="text-align:center;color:var(--muted);padding:30px;font-size:13px">Открытых позиций не найдено</div>';
+    } else {
+      d.positions.forEach(function(p) {
+        var cls = p.signal === 'BUY' ? 'buy' : p.signal === 'SELL' ? 'sell' : 'hold';
+        var sigEmoji = p.signal === 'BUY' ? '🟢' : p.signal === 'SELL' ? '🔴' : '🟡';
+        var trendEmoji = p.trend === 'up' ? '📈' : p.trend === 'down' ? '📉' : '↔';
+        html += '<div class="port-item ' + cls + '">';
+        html += '<div class="port-header">';
+        html += '<div><div class="port-sym">' + sigEmoji + ' ' + p.symbol + '</div><div style="font-size:11px;color:var(--muted);margin-top:2px">' + p.balance + ' монет</div></div>';
+        html += '<div><div class="port-val">$' + p.usd_value.toFixed(2) + '</div><div class="port-val-sub">по $' + fp(p.price) + '</div></div>';
+        html += '</div>';
+        html += '<div class="port-stats">';
+        html += '<div class="port-stat"><div class="port-stat-label">RSI</div><div class="port-stat-val">' + p.rsi + '</div></div>';
+        html += '<div class="port-stat"><div class="port-stat-label">Тренд</div><div class="port-stat-val">' + trendEmoji + '</div></div>';
+        html += '<div class="port-stat"><div class="port-stat-label">Сигнал</div><div class="port-stat-val">' + p.confidence + '%</div></div>';
+        html += '</div>';
+        html += '<div class="port-advice ' + cls + '">' + p.advice + '</div>';
+        html += '</div>';
+      });
+    }
+    html += '</div><div class="pb"></div>';
+    document.getElementById('portInner').innerHTML = html;
+  } catch(e) {
+    document.getElementById('portInner').innerHTML = '<div class="errmsg">Ошибка: ' + e.message + '</div>';
+  }
+}
+
+async function loadPortfolioBalance() {
+  document.getElementById('portInner').innerHTML = '<div class="loading"><div class="spin"></div>Загружаю баланс...</div>';
+  try {
+    var r = await fetch(API + '/portfolio/balance');
+    var d = await r.json();
+    if (d.error) { document.getElementById('portInner').innerHTML = '<div class="errmsg">' + d.error + '</div>'; return; }
+    var html = '<div style="padding:14px 16px">';
+    html += '<div class="port-total"><div class="port-total-val">$' + d.total_usdt.toFixed(2) + '</div><div class="port-total-sub">Общий баланс кошелька</div></div>';
+    if (d.coins) {
+      d.coins.forEach(function(coin) {
+        var pct = d.total_usdt > 0 ? (coin.usd_value / d.total_usdt * 100).toFixed(1) : 0;
+        html += '<div class="port-item hold" style="display:flex;justify-content:space-between;align-items:center">';
+        html += '<div><div style="font-size:16px;font-weight:800">' + coin.symbol + '</div><div style="font-size:11px;color:var(--muted)">' + coin.balance + ' монет · ' + pct + '% портфеля</div></div>';
+        html += '<div style="text-align:right"><div style="font-size:16px;font-weight:800;font-family:monospace">$' + coin.usd_value.toFixed(2) + '</div></div>';
+        html += '</div>';
+      });
+    }
+    html += '</div><div class="pb"></div>';
+    document.getElementById('portInner').innerHTML = html;
+  } catch(e) {
+    document.getElementById('portInner').innerHTML = '<div class="errmsg">Ошибка: ' + e.message + '</div>';
+  }
+}
+
+async function loadPortfolioHistory() {
+  document.getElementById('portInner').innerHTML = '<div class="loading"><div class="spin"></div>Загружаю историю...</div>';
+  try {
+    var r = await fetch(API + '/portfolio/history?limit=20');
+    var d = await r.json();
+    if (d.error) { document.getElementById('portInner').innerHTML = '<div class="errmsg">' + d.error + '</div>'; return; }
+    var html = '<div style="padding:14px 16px">';
+    if (!d.trades || !d.trades.length) {
+      html += '<div style="text-align:center;color:var(--muted);padding:30px">Сделок не найдено</div>';
+    } else {
+      d.trades.forEach(function(t) {
+        var isBuy = t.side.toUpperCase() === 'BUY';
+        var sideEmoji = isBuy ? '🟢' : '🔴';
+        var sideRu = isBuy ? 'Купил' : 'Продал';
+        html += '<div class="hist-trade">';
+        html += '<div class="hist-left"><div class="hist-side ' + (isBuy ? 'up' : 'down') + '">' + sideEmoji + ' ' + sideRu + ' ' + t.symbol + '</div>';
+        html += '<div class="hist-detail">' + t.qty + ' × $' + t.price + ' · комиссия $' + t.fee + '</div></div>';
+        html += '<div class="hist-right"><div class="hist-total ' + (isBuy ? 'down' : 'up') + '">$' + t.total_usdt + '</div>';
+        html += '<div class="hist-date">' + t.date + '</div></div>';
+        html += '</div>';
+      });
+    }
+    html += '</div><div class="pb"></div>';
+    document.getElementById('portInner').innerHTML = html;
+  } catch(e) {
+    document.getElementById('portInner').innerHTML = '<div class="errmsg">Ошибка: ' + e.message + '</div>';
+  }
+}
+
 // ── FUNDAMENTAL ───────────────────────────────────────────────────────────────
 var fundCoin = 'ETH';
 
@@ -839,13 +1023,17 @@ function buildFundCoins() {
 }
 
 async function loadFundamental() {
-  document.getElementById('fundamentalContent').innerHTML = '<div class="loading"><div class="spin"></div>Загружаю фундаментальный анализ ' + fundCoin + '...</div>';
+  document.getElementById('fundamentalContent').innerHTML = '<div class="loading"><div class="spin"></div>Загружаю фундаментальный анализ ' + fundCoin + '...<br><div style="font-size:11px;color:var(--muted);margin-top:8px">Запрашиваю CoinGecko, CryptoPanic, CoinMarketCal...</div></div>';
   try {
-    var r = await fetch(API + '/fundamental/' + fundCoin);
+    var controller = new AbortController();
+    var timer = setTimeout(function(){ controller.abort(); }, 20000);
+    var r = await fetch(API + '/fundamental/' + fundCoin, {signal: controller.signal});
+    clearTimeout(timer);
     var d = await r.json();
     renderFundamental(d);
   } catch(e) {
-    document.getElementById('fundamentalContent').innerHTML = '<div class="errmsg">Ошибка: ' + e.message + '</div>';
+    var msg = e.name === 'AbortError' ? 'Таймаут — внешние API не ответили за 20 сек. Попробуй ещё раз.' : 'Ошибка: ' + e.message;
+    document.getElementById('fundamentalContent').innerHTML = '<div class="errmsg">' + msg + '<br><br><span style="cursor:pointer;color:var(--accent);font-weight:700" onclick="loadFundamental()">↻ Попробовать снова</span></div>';
   }
 }
 
@@ -883,7 +1071,7 @@ function renderFundamental(d) {
     html += '<div class="section"><div class="sec-head">😱 Индекс Страха и Жадности</div>';
     html += '<div class="fund-section">';
     html += '<div style="display:flex;align-items:center;gap:16px;margin-bottom:14px">';
-    html += '<div style="font-size:56px;font-weight:800;font-family:'Space Mono',monospace;color:' + fgColor + ';line-height:1">' + fg.value + '</div>';
+    html += '<div style="font-size:56px;font-weight:800;font-family:monospace;color:' + fgColor + ';line-height:1">' + fg.value + '</div>';
     html += '<div><div style="font-size:17px;font-weight:800;color:' + fgColor + '">' + fg.emoji + ' ' + zoneName + '</div>';
     html += '<div style="font-size:12px;color:var(--muted);margin-top:3px">Зона ' + zoneRange + '</div></div></div>';
     html += '<div style="position:relative;margin-bottom:5px">';
