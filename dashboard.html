@@ -375,14 +375,52 @@ async function checkAuth() {
   var spinner = document.getElementById('authSpinner');
   var msg = document.getElementById('authMsg');
 
-  // Получаем user_id сразу — до любых запросов
   var tg = window.Telegram && window.Telegram.WebApp;
   var uid = 0;
+
+  // Способ 1: initDataUnsafe.user.id
   if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) {
     uid = tg.initDataUnsafe.user.id;
   }
 
-  if (!tg || uid === 0) {
+  // Способ 2: парсим initData вручную если initDataUnsafe пустой
+  if (uid === 0 && tg && tg.initData && tg.initData.length > 0) {
+    try {
+      var params = {};
+      tg.initData.split('&').forEach(function(p) {
+        var kv = p.split('=');
+        if (kv.length >= 2) params[decodeURIComponent(kv[0])] = decodeURIComponent(kv.slice(1).join('='));
+      });
+      if (params.user) {
+        var u = JSON.parse(params.user);
+        if (u && u.id) uid = u.id;
+      }
+    } catch(e) {}
+  }
+
+  // Показываем отладку в msg на 2 секунды
+  msg.textContent = 'Проверяю доступ... ID: ' + uid;
+
+  if (!tg) {
+    showDenied(screen, spinner, msg);
+    return;
+  }
+
+  // Если uid всё ещё 0 — пробуем через сервер с initData
+  if (uid === 0 && tg && tg.initData) {
+    try {
+      var resp = await fetch(AUTH_API + '/auth/verify', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({initData: tg.initData})
+      });
+      var result = await resp.json();
+      if (result.ok) { screen.style.display = 'none'; return; }
+      if (result.user_id) uid = result.user_id;
+    } catch(e) {}
+  }
+
+  if (uid === 0) {
     showDenied(screen, spinner, msg);
     return;
   }
