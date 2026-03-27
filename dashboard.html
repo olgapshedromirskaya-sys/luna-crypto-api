@@ -340,25 +340,37 @@
   <!-- Курс -->
   <div style="background:rgba(0,212,255,.06);border:1px solid rgba(0,212,255,.2);border-radius:10px;padding:12px 18px;margin-bottom:16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
     <span style="font-size:12px;color:var(--muted);font-family:var(--font-mono);">Курс USDT/RUB:</span>
-    <input type="number" id="usd-rate" value="92" style="width:90px;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--font-mono);font-size:13px;font-weight:700;outline:none;" oninput="updateRateConversions()" />
-    <span style="font-size:11px;color:var(--muted);">₽ за 1 USDT — введи актуальный курс</span>
+    <input type="number" id="usd-rate" value="92" style="width:90px;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--font-mono);font-size:13px;font-weight:700;outline:none;" oninput="syncAll()" />
+    <span style="font-size:11px;color:var(--muted);">₽ за 1 USDT</span>
     <button class="btn btn-sm btn-secondary" onclick="fetchRate()">🔄 Авто-курс</button>
     <span id="rate-status" style="font-size:11px;color:var(--muted);"></span>
   </div>
 
   <div id="calc-mode1">
     <div class="card" style="margin-bottom:16px;">
-      <div class="card-title">Входные данные — суммы в рублях</div>
+      <div class="card-title">Входные данные — выбери валюту для каждого поля</div>
       <div class="input-row">
         <div class="input-group">
-          <label>СТАРТОВЫЙ КАПИТАЛ ₽</label>
-          <input type="number" id="c1-deposit-rub" placeholder="100 000" oninput="syncCalc1()" />
-          <span id="c1-deposit-usd" style="font-size:11px;color:var(--accent);font-family:var(--font-mono);margin-top:3px;">≈ — USDT</span>
+          <label>МОЙ ДЕПОЗИТ</label>
+          <div style="display:flex;gap:6px;">
+            <input type="number" id="c1-deposit-val" placeholder="100" oninput="syncCalc1()" style="flex:1;" />
+            <select id="c1-deposit-cur" onchange="syncCalc1()" style="width:70px;">
+              <option value="USD">$ USD</option>
+              <option value="RUB">₽ RUB</option>
+            </select>
+          </div>
+          <span id="c1-deposit-conv" style="font-size:11px;color:var(--accent);font-family:var(--font-mono);margin-top:4px;display:block;">≈ —</span>
         </div>
         <div class="input-group">
-          <label>ЦЕЛЬ ₽</label>
-          <input type="number" id="c1-goal-rub" placeholder="1 000 000" oninput="syncCalc1()" />
-          <span id="c1-goal-usd" style="font-size:11px;color:var(--accent);font-family:var(--font-mono);margin-top:3px;">≈ — USDT</span>
+          <label>МОЯ ЦЕЛЬ</label>
+          <div style="display:flex;gap:6px;">
+            <input type="number" id="c1-goal-val" placeholder="150000" oninput="syncCalc1()" style="flex:1;" />
+            <select id="c1-goal-cur" onchange="syncCalc1()" style="width:70px;">
+              <option value="RUB">₽ RUB</option>
+              <option value="USD">$ USD</option>
+            </select>
+          </div>
+          <span id="c1-goal-conv" style="font-size:11px;color:var(--accent);font-family:var(--font-mono);margin-top:4px;display:block;">≈ —</span>
         </div>
       </div>
       <button class="btn btn-primary" onclick="calcMode1()">Рассчитать</button>
@@ -368,12 +380,18 @@
 
   <div id="calc-mode2" style="display:none;">
     <div class="card" style="margin-bottom:16px;">
-      <div class="card-title">Входные данные — суммы в рублях</div>
+      <div class="card-title">Входные данные — выбери валюту для каждого поля</div>
       <div class="input-row">
         <div class="input-group">
-          <label>ЦЕЛЕВОЙ ДОХОД ₽</label>
-          <input type="number" id="c2-goal-rub" placeholder="1 000 000" oninput="syncCalc2()" />
-          <span id="c2-goal-usd" style="font-size:11px;color:var(--accent);font-family:var(--font-mono);margin-top:3px;">≈ — USDT</span>
+          <label>МОЯ ЦЕЛЬ (ДОХОД)</label>
+          <div style="display:flex;gap:6px;">
+            <input type="number" id="c2-goal-val" placeholder="150000" oninput="syncCalc2()" style="flex:1;" />
+            <select id="c2-goal-cur" onchange="syncCalc2()" style="width:70px;">
+              <option value="RUB">₽ RUB</option>
+              <option value="USD">$ USD</option>
+            </select>
+          </div>
+          <span id="c2-goal-conv" style="font-size:11px;color:var(--accent);font-family:var(--font-mono);margin-top:4px;display:block;">≈ —</span>
         </div>
         <div class="input-group">
           <label>СРОК (ДНЕЙ)</label>
@@ -936,25 +954,50 @@ function switchCalc(m){
 
 function getRate(){ return +document.getElementById('usd-rate').value || 92; }
 
+// Convert any value to USD
+function toUsd(val, cur){ return cur==='USD' ? val : val/getRate(); }
+// Convert USD to display currency
+function fromUsd(usd, cur){ return cur==='USD' ? usd : usd*getRate(); }
+
+function fmtCur(val, cur){
+  if(cur==='USD') return '$'+val.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  return '₽'+Math.round(val).toLocaleString('ru-RU');
+}
+function fmtBothCur(usd){
+  const r=getRate();
+  return '$'+usd.toFixed(2)+' / ₽'+Math.round(usd*r).toLocaleString('ru-RU');
+}
 function fmtRub(n){ return '₽'+Math.round(n).toLocaleString('ru-RU'); }
-function fmtUsd(n){ return n>=1000 ? '$'+n.toLocaleString('en-US',{maximumFractionDigits:2}) : '$'+n.toFixed(2); }
-function fmtBoth(usd){ const r=getRate(); return fmtUsd(usd)+' / '+fmtRub(usd*r); }
+function fmtUsd(n){ return '$'+n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 
 function syncCalc1(){
   const r=getRate();
-  const d=+document.getElementById('c1-deposit-rub').value;
-  const g=+document.getElementById('c1-goal-rub').value;
-  document.getElementById('c1-deposit-usd').textContent = d ? '≈ '+fmtUsd(d/r)+' USDT' : '≈ — USDT';
-  document.getElementById('c1-goal-usd').textContent    = g ? '≈ '+fmtUsd(g/r)+' USDT' : '≈ — USDT';
+  const val=+document.getElementById('c1-deposit-val').value;
+  const cur=document.getElementById('c1-deposit-cur').value;
+  const gval=+document.getElementById('c1-goal-val').value;
+  const gcur=document.getElementById('c1-goal-cur').value;
+  if(val){
+    const conv = cur==='USD' ? fmtRub(val*r) : fmtUsd(val/r);
+    document.getElementById('c1-deposit-conv').textContent = '≈ '+conv;
+  } else { document.getElementById('c1-deposit-conv').textContent='≈ —'; }
+  if(gval){
+    const gconv = gcur==='USD' ? fmtRub(gval*r) : fmtUsd(gval/r);
+    document.getElementById('c1-goal-conv').textContent = '≈ '+gconv;
+  } else { document.getElementById('c1-goal-conv').textContent='≈ —'; }
 }
 
 function syncCalc2(){
   const r=getRate();
-  const g=+document.getElementById('c2-goal-rub').value;
-  document.getElementById('c2-goal-usd').textContent = g ? '≈ '+fmtUsd(g/r)+' USDT' : '≈ — USDT';
+  const val=+document.getElementById('c2-goal-val').value;
+  const cur=document.getElementById('c2-goal-cur').value;
+  if(val){
+    const conv = cur==='USD' ? fmtRub(val*r) : fmtUsd(val/r);
+    document.getElementById('c2-goal-conv').textContent = '≈ '+conv;
+  } else { document.getElementById('c2-goal-conv').textContent='≈ —'; }
 }
 
-function updateRateConversions(){ syncCalc1(); syncCalc2(); }
+function syncAll(){ syncCalc1(); syncCalc2(); }
+function updateRateConversions(){ syncAll(); }
 
 async function fetchRate(){
   document.getElementById('rate-status').textContent = '⏳ Загружаю...';
@@ -962,10 +1005,12 @@ async function fetchRate(){
     const r = await fetch('https://api.bybit.com/v5/market/tickers?category=spot&symbol=USDTRUB');
     const d = await r.json();
     const price = d?.result?.list?.[0]?.lastPrice;
-    if(price){ document.getElementById('usd-rate').value=Math.round(+price); updateRateConversions(); document.getElementById('rate-status').textContent='✓ курс обновлён'; }
-    else throw new Error();
+    if(price){
+      document.getElementById('usd-rate').value=Math.round(+price);
+      syncAll();
+      document.getElementById('rate-status').textContent='✓ '+Math.round(+price)+' ₽/USDT';
+    } else throw new Error();
   } catch {
-    // fallback — just note that auto didn't work
     document.getElementById('rate-status').textContent = 'Введи курс вручную';
   }
 }
@@ -978,158 +1023,137 @@ const SC=[
 ];
 
 function calcMode1(){
-  const r = getRate();
-  const dRub = +document.getElementById('c1-deposit-rub').value;
-  const gRub = +document.getElementById('c1-goal-rub').value;
-  if(!dRub||!gRub||gRub<=dRub){alert('Цель должна быть больше стартового капитала');return;}
-  const d = dRub/r, g = gRub/r;
-  renderCalc1(d, g, dRub, gRub);
-}
+  const r    = getRate();
+  const dVal = +document.getElementById('c1-deposit-val').value;
+  const dCur = document.getElementById('c1-deposit-cur').value;
+  const gVal = +document.getElementById('c1-goal-val').value;
+  const gCur = document.getElementById('c1-goal-cur').value;
+  if(!dVal||!gVal){ alert('Заполни оба поля'); return; }
+  const dUsd = toUsd(dVal, dCur);
+  const gUsd = toUsd(gVal, gCur);
+  if(gUsd <= dUsd){ alert('Цель должна быть больше депозита'); return; }
 
-function renderCalc1(d, g, dRub, gRub){
-  const r = getRate();
   const rows = SC.map(s => {
-    const days = Math.ceil(Math.log(g/d)/Math.log(1+s.p/100));
-    const dt = new Date(); dt.setDate(dt.getDate()+days);
-    const finalUsd = d*Math.pow(1+s.p/100,days);
-    const profitUsd = finalUsd-d;
-    const x = (finalUsd/d).toFixed(2);
-    const d7  = Math.min(7, days);
-    const d30 = Math.min(30, days);
-    const d90 = Math.min(90, days);
-    const checkpoints = [
-      {label:'Сегодня',    day:0},
-      {label:'Через 7 дн', day:d7},
-      {label:'Через 30 дн',day:d30},
-      {label:'Через 90 дн',day:d90},
-      {label:'🎯 Цель достигнута', day:days},
-    ].filter((cp,i,arr) => i===0 || cp.day !== arr[i-1].day);
-    const cpRows = checkpoints.map(cp => {
-      const bal = d*Math.pow(1+s.p/100,cp.day);
+    const days       = Math.ceil(Math.log(gUsd/dUsd)/Math.log(1+s.p/100));
+    const finalUsd   = dUsd*Math.pow(1+s.p/100,days);
+    const profitUsd  = finalUsd-dUsd;
+    const dt         = new Date(); dt.setDate(dt.getDate()+days);
+    const day1Usd    = dUsd*s.p/100;
+
+    // Checkpoints with real dates
+    const cps = [0];
+    for(const d of [7,30,90]){ if(d<days) cps.push(d); }
+    cps.push(days);
+    const cpRows = [...new Set(cps)].map(day=>{
+      const bal = dUsd*Math.pow(1+s.p/100,day);
+      const earned = bal-dUsd;
       const dayP = bal*s.p/100;
-      const earned = bal-d;
-      const cpDt = new Date(); cpDt.setDate(cpDt.getDate()+cp.day);
-      const isGoal = cp.day===days;
+      const cpDt = new Date(); cpDt.setDate(cpDt.getDate()+day);
+      const isGoal = day===days;
+      const lbl = day===0?'Сегодня':isGoal?'🎯 Цель':('Через '+day+' дн');
       return '<tr style="'+(isGoal?'background:rgba(0,232,138,.05);':'')+'">'
-        +'<td style="color:'+(isGoal?'var(--green)':'var(--accent)')+'">'+cp.label+'</td>'
+        +'<td style="color:'+(isGoal?'var(--green)':'var(--accent)')+'">'+lbl+'</td>'
         +'<td style="font-family:var(--font-mono)">'+cpDt.toLocaleDateString('ru-RU')+'</td>'
-        +'<td style="font-weight:700">'+fmtRub(bal*r)+'</td>'
-        +'<td style="color:var(--muted);font-size:11px">'+fmtUsd(bal)+'</td>'
-        +'<td style="color:var(--green)">+'+(cp.day===0?'₽0':fmtRub(earned*r))+'</td>'
-        +'<td style="color:'+s.c+'">'+fmtRub(dayP*r)+'/д</td>'
+        +'<td style="font-weight:700">'+fmtUsd(bal)+'</td>'
+        +'<td style="color:var(--muted);font-size:11px">'+fmtRub(bal*r)+'</td>'
+        +'<td style="color:var(--green)">+'+(day===0?'$0':fmtUsd(earned))+'<br><span style="color:var(--muted);font-size:10px;">'+(day===0?'':'+'+fmtRub(earned*r))+'</span></td>'
+        +'<td style="color:'+s.c+'">'+fmtUsd(dayP)+'/д<br><span style="color:var(--muted);font-size:10px;">'+fmtRub(dayP*r)+'/д</span></td>'
         +'</tr>';
     }).join('');
-    const pct = Math.round((g/d-1)*100);
-    const barW = Math.min(100, pct/10);
+
     return '<div style="background:var(--surface);border:1px solid '+s.c+'40;border-radius:12px;padding:20px;margin-bottom:16px;">'
-      +'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;flex-wrap:wrap;gap:8px;">'
-      +'<div><span style="font-size:15px;font-weight:800;color:'+s.c+'">'+s.l+'</span>'
-      +'<span style="font-family:var(--font-mono);font-size:12px;color:var(--muted);margin-left:10px;">'+s.p+'% в день</span></div>'
+      +'<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;margin-bottom:14px;">'
+      +'<div><span style="font-size:15px;font-weight:800;color:'+s.c+'">'+s.l+'</span><span style="font-family:var(--font-mono);font-size:12px;color:var(--muted);margin-left:10px;">'+s.p+'%/день</span></div>'
       +'<div style="text-align:right;">'
-      +'<div style="font-size:22px;font-weight:800;color:'+s.c+'">'+fmtRub(finalUsd*r)+'</div>'
-      +'<div style="font-size:11px;color:var(--muted);font-family:var(--font-mono);">'+fmtUsd(finalUsd)+' · в '+x+'x больше</div>'
+      +'<div style="font-size:11px;color:var(--muted);">Итоговый баланс</div>'
+      +'<div style="font-size:20px;font-weight:800;color:'+s.c+'">'+fmtUsd(finalUsd)+'</div>'
+      +'<div style="font-size:12px;color:var(--muted);">'+fmtRub(finalUsd*r)+'</div>'
       +'</div></div>'
-      +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px;">'
+      +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px;">'
       +'<div style="background:var(--bg);border-radius:8px;padding:12px;text-align:center;">'
       +'<div style="font-size:10px;color:var(--muted);margin-bottom:4px;">СРОК</div>'
-      +'<div style="font-size:18px;font-weight:800;font-family:var(--font-mono);">'+days+'</div>'
+      +'<div style="font-size:20px;font-weight:800;font-family:var(--font-mono);">'+days+'</div>'
       +'<div style="font-size:10px;color:var(--muted);">дней</div></div>'
       +'<div style="background:var(--bg);border-radius:8px;padding:12px;text-align:center;">'
       +'<div style="font-size:10px;color:var(--muted);margin-bottom:4px;">ДАТА ЦЕЛИ</div>'
-      +'<div style="font-size:13px;font-weight:700;font-family:var(--font-mono);">'+dt.toLocaleDateString('ru-RU')+'</div>'
-      +'<div style="font-size:10px;color:var(--muted);">&nbsp;</div></div>'
+      +'<div style="font-size:13px;font-weight:700;">'+dt.toLocaleDateString('ru-RU')+'</div></div>'
       +'<div style="background:var(--bg);border-radius:8px;padding:12px;text-align:center;">'
-      +'<div style="font-size:10px;color:var(--muted);margin-bottom:4px;">ЧИСТАЯ ПРИБЫЛЬ</div>'
-      +'<div style="font-size:16px;font-weight:800;color:var(--green);">+'+fmtRub(profitUsd*r)+'</div>'
-      +'<div style="font-size:10px;color:var(--muted);">'+fmtUsd(profitUsd)+'</div></div>'
+      +'<div style="font-size:10px;color:var(--muted);margin-bottom:4px;">ПРИБЫЛЬ</div>'
+      +'<div style="font-size:14px;font-weight:800;color:var(--green);">+'+fmtUsd(profitUsd)+'</div>'
+      +'<div style="font-size:11px;color:var(--muted);">+'+fmtRub(profitUsd*r)+'</div></div>'
       +'</div>'
-      +'<div style="margin-bottom:6px;font-size:11px;color:var(--muted);font-family:var(--font-mono);">Как растёт депозит — ключевые точки:</div>'
+      +'<div style="margin-bottom:6px;font-size:11px;color:var(--muted);">Баланс по датам: $ слева, ₽ справа</div>'
       +'<div style="overflow-x:auto;"><table class="detail-table">'
-      +'<thead><tr><th>Когда</th><th>Дата</th><th>Баланс ₽</th><th>в USDT</th><th>Прибыль всего</th><th>Прибыль/день</th></tr></thead>'
+      +'<thead><tr><th>Когда</th><th>Дата</th><th>Баланс $</th><th>Баланс ₽</th><th>Прибыль всего</th><th>Прибыль/день</th></tr></thead>'
       +'<tbody>'+cpRows+'</tbody></table></div>'
-      +'<div style="margin-top:14px;background:var(--bg);border-radius:6px;padding:10px 14px;font-size:11px;color:var(--muted);font-family:var(--font-mono);line-height:1.7;">'
-      +'💡 Начинаешь с '+fmtRub(dRub)+'. '
-      +'Каждый день прибыль прибавляется к балансу и на следующий день торгуешь уже с большей суммой. '
-      +'Поэтому прибыль в день 1 = '+fmtRub(d*s.p/100*r)+', а к концу уже '+fmtRub(finalUsd*s.p/100*r)+' в день.'
+      +'<div style="margin-top:12px;background:var(--bg);border-radius:6px;padding:10px 14px;font-size:11px;color:var(--muted);line-height:1.6;">'
+      +'Депозит: <strong style="color:var(--text)">'+fmtCur(dVal,dCur)+'</strong> ('+fmtBothCur(dUsd).split(' / ')[(dCur==='USD'?1:0)]+')'
+      +' → Цель: <strong style="color:var(--text)">'+fmtCur(gVal,gCur)+'</strong> ('+fmtBothCur(gUsd).split(' / ')[(gCur==='USD'?1:0)]+')'
       +'</div></div>';
   }).join('');
   document.getElementById('calc1-result').innerHTML = rows;
 }
 
 function calcMode2(){
-  const r = getRate();
-  const gRub = +document.getElementById('c2-goal-rub').value;
-  const days  = +document.getElementById('c2-days').value;
-  if(!gRub||!days){alert('Заполни все поля');return;}
-  const g = gRub/r;
-  renderCalc2(g,days,gRub);
-}
+  const r    = getRate();
+  const gVal = +document.getElementById('c2-goal-val').value;
+  const gCur = document.getElementById('c2-goal-cur').value;
+  const days = +document.getElementById('c2-days').value;
+  if(!gVal||!days){ alert('Заполни все поля'); return; }
+  const gUsd = toUsd(gVal, gCur);
 
-function renderCalc2(g,days,gRub){
-  const r = getRate();
   const rows = SC.map(s => {
-    const dep = g/Math.pow(1+s.p/100,days);
-    const profit = g-dep;
-    const d1 = dep*s.p/100;
-    const dL = g*s.p/100;
-    const x = (g/dep).toFixed(2);
-    const d7  = Math.min(7, days);
-    const d30 = Math.min(30, days);
-    const d90 = Math.min(90, days);
-    const checkpoints = [
-      {label:'Сегодня',    day:0},
-      {label:'Через 7 дн', day:d7},
-      {label:'Через 30 дн',day:d30},
-      {label:'Через 90 дн',day:d90},
-      {label:'🎯 Цель достигнута', day:days},
-    ].filter((cp,i,arr) => i===0 || cp.day !== arr[i-1].day);
-    const cpRows = checkpoints.map(cp => {
-      const bal = dep*Math.pow(1+s.p/100,cp.day);
-      const dayP = bal*s.p/100;
-      const earned = bal-dep;
-      const cpDt = new Date(); cpDt.setDate(cpDt.getDate()+cp.day);
-      const isGoal = cp.day===days;
+    const depUsd   = gUsd/Math.pow(1+s.p/100,days);
+    const profitUsd = gUsd-depUsd;
+    const d1Usd    = depUsd*s.p/100;
+    const dLUsd    = gUsd*s.p/100;
+
+    const cps = [0];
+    for(const d of [7,30,90]){ if(d<days) cps.push(d); }
+    cps.push(days);
+    const cpRows = [...new Set(cps)].map(day=>{
+      const bal    = depUsd*Math.pow(1+s.p/100,day);
+      const earned = bal-depUsd;
+      const dayP   = bal*s.p/100;
+      const cpDt   = new Date(); cpDt.setDate(cpDt.getDate()+day);
+      const isGoal = day===days;
+      const lbl    = day===0?'Сегодня':isGoal?'🎯 Финиш':('Через '+day+' дн');
       return '<tr style="'+(isGoal?'background:rgba(0,232,138,.05);':'')+'">'
-        +'<td style="color:'+(isGoal?'var(--green)':'var(--accent)')+'">'+cp.label+'</td>'
+        +'<td style="color:'+(isGoal?'var(--green)':'var(--accent)')+'">'+lbl+'</td>'
         +'<td style="font-family:var(--font-mono)">'+cpDt.toLocaleDateString('ru-RU')+'</td>'
-        +'<td style="font-weight:700">'+fmtRub(bal*r)+'</td>'
-        +'<td style="color:var(--muted);font-size:11px">'+fmtUsd(bal)+'</td>'
-        +'<td style="color:var(--green)">+'+(cp.day===0?'₽0':fmtRub(earned*r))+'</td>'
-        +'<td style="color:'+s.c+'">'+fmtRub(dayP*r)+'/д</td>'
+        +'<td style="font-weight:700">'+fmtUsd(bal)+'</td>'
+        +'<td style="color:var(--muted);font-size:11px">'+fmtRub(bal*r)+'</td>'
+        +'<td style="color:var(--green)">+'+(day===0?'$0':fmtUsd(earned))+'<br><span style="color:var(--muted);font-size:10px;">'+(day===0?'':'+'+fmtRub(earned*r))+'</span></td>'
+        +'<td style="color:'+s.c+'">'+fmtUsd(dayP)+'/д<br><span style="color:var(--muted);font-size:10px;">'+fmtRub(dayP*r)+'/д</span></td>'
         +'</tr>';
     }).join('');
+
     return '<div style="background:var(--surface);border:1px solid '+s.c+'40;border-radius:12px;padding:20px;margin-bottom:16px;">'
-      +'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;flex-wrap:wrap;gap:8px;">'
-      +'<div><span style="font-size:15px;font-weight:800;color:'+s.c+'">'+s.l+'</span>'
-      +'<span style="font-family:var(--font-mono);font-size:12px;color:var(--muted);margin-left:10px;">'+s.p+'% в день</span></div>'
+      +'<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;margin-bottom:14px;">'
+      +'<div><span style="font-size:15px;font-weight:800;color:'+s.c+'">'+s.l+'</span><span style="font-family:var(--font-mono);font-size:12px;color:var(--muted);margin-left:10px;">'+s.p+'%/день</span></div>'
       +'<div style="text-align:right;">'
-      +'<div style="font-size:13px;color:var(--muted);">Нужен депозит:</div>'
-      +'<div style="font-size:22px;font-weight:800;color:'+s.c+'">'+fmtRub(dep*r)+'</div>'
-      +'<div style="font-size:11px;color:var(--muted);font-family:var(--font-mono);">'+fmtUsd(dep)+' · капитал вырастет в '+x+'x</div>'
+      +'<div style="font-size:11px;color:var(--muted);">Нужен стартовый депозит</div>'
+      +'<div style="font-size:20px;font-weight:800;color:'+s.c+'">'+fmtUsd(depUsd)+'</div>'
+      +'<div style="font-size:12px;color:var(--muted);">'+fmtRub(depUsd*r)+'</div>'
       +'</div></div>'
-      +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px;">'
+      +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px;">'
       +'<div style="background:var(--bg);border-radius:8px;padding:12px;text-align:center;">'
-      +'<div style="font-size:10px;color:var(--muted);margin-bottom:4px;">ПРИБЫЛЬ ДЕНЬ 1</div>'
-      +'<div style="font-size:16px;font-weight:800;color:var(--green);">+'+fmtRub(d1*r)+'</div>'
-      +'<div style="font-size:10px;color:var(--muted);">'+fmtUsd(d1)+'/день</div></div>'
+      +'<div style="font-size:10px;color:var(--muted);margin-bottom:2px;">ПРИБЫЛЬ ДЕНЬ 1</div>'
+      +'<div style="font-size:14px;font-weight:800;color:var(--green);">+'+fmtUsd(d1Usd)+'</div>'
+      +'<div style="font-size:11px;color:var(--muted);">+'+fmtRub(d1Usd*r)+'</div></div>'
       +'<div style="background:var(--bg);border-radius:8px;padding:12px;text-align:center;">'
-      +'<div style="font-size:10px;color:var(--muted);margin-bottom:4px;">ПРИБЫЛЬ ПОСЛ.ДЕНЬ</div>'
-      +'<div style="font-size:16px;font-weight:800;color:var(--green);">+'+fmtRub(dL*r)+'</div>'
-      +'<div style="font-size:10px;color:var(--muted);">'+fmtUsd(dL)+'/день</div></div>'
+      +'<div style="font-size:10px;color:var(--muted);margin-bottom:2px;">ПРИБЫЛЬ ПОСЛ.ДЕНЬ</div>'
+      +'<div style="font-size:14px;font-weight:800;color:var(--green);">+'+fmtUsd(dLUsd)+'</div>'
+      +'<div style="font-size:11px;color:var(--muted);">+'+fmtRub(dLUsd*r)+'</div></div>'
       +'<div style="background:var(--bg);border-radius:8px;padding:12px;text-align:center;">'
-      +'<div style="font-size:10px;color:var(--muted);margin-bottom:4px;">ИТОГО ПРИБЫЛЬ</div>'
-      +'<div style="font-size:16px;font-weight:800;color:var(--green);">+'+fmtRub(profit*r)+'</div>'
-      +'<div style="font-size:10px;color:var(--muted);">'+fmtUsd(profit)+'</div></div>'
+      +'<div style="font-size:10px;color:var(--muted);margin-bottom:2px;">ИТОГО ПРИБЫЛЬ</div>'
+      +'<div style="font-size:14px;font-weight:800;color:var(--green);">+'+fmtUsd(profitUsd)+'</div>'
+      +'<div style="font-size:11px;color:var(--muted);">+'+fmtRub(profitUsd*r)+'</div></div>'
       +'</div>'
-      +'<div style="margin-bottom:6px;font-size:11px;color:var(--muted);font-family:var(--font-mono);">Как растёт депозит по пути к цели:</div>'
+      +'<div style="margin-bottom:6px;font-size:11px;color:var(--muted);">Как растёт баланс: $ слева, ₽ справа</div>'
       +'<div style="overflow-x:auto;"><table class="detail-table">'
-      +'<thead><tr><th>Когда</th><th>Дата</th><th>Баланс ₽</th><th>в USDT</th><th>Прибыль всего</th><th>Прибыль/день</th></tr></thead>'
-      +'<tbody>'+cpRows+'</tbody></table></div>'
-      +'<div style="margin-top:14px;background:var(--bg);border-radius:6px;padding:10px 14px;font-size:11px;color:var(--muted);font-family:var(--font-mono);line-height:1.7;">'
-      +'💡 Стартуешь с '+fmtRub(dep*r)+' — зарабатываешь '+fmtRub(d1*r)+' в первый день. '
-      +'Прибыль каждый день прибавляется к балансу, поэтому к последнему дню (+'+days+'дн) '
-      +'твой баланс '+fmtRub(g*r)+' и прибыль уже '+fmtRub(dL*r)+' в день.'
-      +'</div></div>';
+      +'<thead><tr><th>Когда</th><th>Дата</th><th>Баланс $</th><th>Баланс ₽</th><th>Прибыль всего</th><th>Прибыль/день</th></tr></thead>'
+      +'<tbody>'+cpRows+'</tbody></table></div></div>';
   }).join('');
   document.getElementById('calc2-result').innerHTML = rows;
 }
