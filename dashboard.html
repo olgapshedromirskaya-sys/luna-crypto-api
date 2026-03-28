@@ -2,8 +2,9 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>LUNA — Crypto Intelligence</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root {
@@ -24,6 +25,8 @@
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { background: var(--bg); color: var(--text); font-family: var(--font-main); min-height: 100vh; overflow-x: hidden; }
+  /* Telegram WebApp safe areas */
+  .tab-content { padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px)); }
 
   .header { display: flex; align-items: center; justify-content: space-between; padding: 14px 28px; border-bottom: 1px solid var(--border); background: var(--surface); position: sticky; top: 0; z-index: 100; }
   .logo { font-size: 22px; font-weight: 800; letter-spacing: 4px; background: linear-gradient(90deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
@@ -157,8 +160,8 @@
 <div id="tab-analysis" class="tab-content active">
 
   <div class="api-banner">
-    <span style="color:var(--accent2);font-weight:700;font-family:var(--font-mono);">AI KEY:</span>
-    <input type="password" id="api-key-input" placeholder="sk-ant-api03-..." />
+    <span style="color:var(--accent2);font-weight:700;font-family:var(--font-mono);">AI KEY (vsellm.ru):</span>
+    <input type="password" id="api-key-input" placeholder="vsellm-key или sk-..." />
     <button class="btn btn-sm btn-secondary" onclick="saveKey()">Сохранить</button>
     <span id="key-status" style="font-size:11px;color:var(--muted)"></span>
   </div>
@@ -406,9 +409,19 @@
 
 <script>
 // ─── STATE ────────────────────────────────────────────────────────────────────
-const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
-const BYBIT_BASE = 'https://api.bybit.com';
-let claudeApiKey = localStorage.getItem('luna_api_key') || '';
+const AI_API_URL  = 'https://api.vsellm.ru/v1/chat/completions';
+const AI_MODEL    = 'openai/gpt-4o-mini'; // можно менять: openai/gpt-4o, anthropic/claude-sonnet-4.5 и др.
+const BYBIT_BASE  = 'https://api.bybit.com';
+let claudeApiKey  = localStorage.getItem('luna_api_key') || '';
+
+// Инициализация Telegram WebApp
+if (window.Telegram && window.Telegram.WebApp) {
+  const tg = window.Telegram.WebApp;
+  tg.ready();
+  tg.expand();
+  // Подстраиваем цвета под тему Telegram если нужно
+  document.documentElement.style.setProperty('--tg-safe-top', tg.safeAreaInset ? tg.safeAreaInset.top + 'px' : '0px');
+}
 let journalTrades = JSON.parse(localStorage.getItem('luna_trades') || '[]');
 let newsData = [];
 let activeMA = new Set([20, 50, 200]);
@@ -784,10 +797,9 @@ R/R: ${rr}
 
 Коротко. На русском.`;
 
-    const resp = await fetch(CLAUDE_API_URL, {
+    const resp = await fetch(AI_API_URL, {
       method:'POST',
-      headers:{'Content-Type':'application/json','x-api-key':claudeApiKey,'anthropic-version':'2023-06-01'},
-      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1200,messages:[{role:'user',content:prompt}]})
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+claudeApiKey},body:JSON.stringify({model:AI_MODEL,max_tokens:1200,messages:[{role:'user',content:prompt}]})
     });
     const data = await resp.json();
     document.getElementById('analysis-output').className = 'analysis-box';
@@ -879,10 +891,9 @@ async function loadNews() {
   c.innerHTML='<div style="text-align:center;color:var(--muted);padding:30px;"><div class="spinner" style="margin:auto;margin-bottom:10px"></div>Загружаю...</div>';
   if (!claudeApiKey){c.innerHTML='<div style="text-align:center;color:var(--muted);padding:40px;">⚠️ Нужен API ключ</div>';return;}
   try {
-    const resp = await fetch(CLAUDE_API_URL,{method:'POST',headers:{'Content-Type':'application/json','x-api-key':claudeApiKey,'anthropic-version':'2023-06-01'},
-      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1500,messages:[{role:'user',content:'Сгенерируй 8 крипто новостей JSON: [{"title":"...","body":"...","type":"listing|up|down","impact":"bullish|bearish|neutral","time":"X мин назад"}]. ТОЛЬКО JSON.'}]})});
+    const resp = await fetch(AI_API_URL,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+claudeApiKey},body:JSON.stringify({model:AI_MODEL,max_tokens:1500,messages:[{role:'user',content:'Сгенерируй 8 крипто новостей JSON: [{"title":"...","body":"...","type":"listing|up|down","impact":"bullish|bearish|neutral","time":"X мин назад"}]. ТОЛЬКО JSON.'}]})});
     const d = await resp.json();
-    newsData = JSON.parse(d.content[0].text.replace(/```json|```/g,'').trim());
+    newsData = JSON.parse(d.choices[0].message.content.replace(/```json|```/g,'').trim());
     filterNews('all');
   } catch(e){c.innerHTML=`<div style="color:var(--red);padding:20px;">Ошибка: ${e.message}</div>`;}
 }
