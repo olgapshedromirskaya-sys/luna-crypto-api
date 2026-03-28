@@ -11,7 +11,8 @@ from telegram.ext import (
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 TELEGRAM_TOKEN = os.getenv("BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN", "")
-CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "YOUR_CLAUDE_API_KEY")
+CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "")
+DASHBOARD_URL  = os.getenv("DASHBOARD_URL", "https://olgapshedromirskaya-sys.github.io/luna-crypto-api/dashboard.html")
 BYBIT_BASE     = "https://api.bybit.com"
 CLAUDE_URL     = "https://api.anthropic.com/v1/messages"
 
@@ -22,10 +23,11 @@ MA_SETTINGS = {
     "1d":  {"interval": "D",   "fast": 180, "slow": 360, "label": "1 день"},
 }
 
-TOP_COINS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT",
-             "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "DOTUSDT", "LTCUSDT"]
+TOP_COINS = ["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT",
+             "DOGEUSDT","ADAUSDT","AVAXUSDT","DOTUSDT","LTCUSDT"]
 
 MONITORING_CHATS: set = set()
+WAITING_INPUT: dict = {}  # chat_id -> "calc1" | "calc2"
 
 SCENARIOS = [
     ("🔵 Консервативный", 0.5),
@@ -71,7 +73,7 @@ def calc_rsi(closes: list, period: int = 14) -> list:
     return rsi
 
 
-async def claude_ask(prompt: str, max_tokens: int = 1000) -> str:
+async def claude_ask(prompt: str, max_tokens: int = 800) -> str:
     headers = {
         "Content-Type": "application/json",
         "x-api-key": CLAUDE_API_KEY,
@@ -95,26 +97,23 @@ def fmt_price(p: float) -> str:
         return f"{p:,.2f}"
     elif p >= 1:
         return f"{p:.4f}"
-    else:
-        return f"{p:.6f}"
+    return f"{p:.6f}"
 
 
 # ─── CALCULATOR HELPERS ───────────────────────────────────────────────────────
 
 async def get_usdt_rate() -> float:
-    """Fetch USDT/RUB rate from Bybit, fallback to 92."""
     try:
         async with aiohttp.ClientSession() as s:
             async with s.get(f"{BYBIT_BASE}/v5/market/tickers?category=spot&symbol=USDTRUB") as r:
                 d = await r.json()
-        price = d["result"]["list"][0]["lastPrice"]
-        return float(price)
+        return float(d["result"]["list"][0]["lastPrice"])
     except Exception:
         return 92.0
 
 
 def fmt_rub(n: float) -> str:
-    return "₽" + f"{round(n):,}".replace(",", " ")
+    return "\u20bd" + f"{round(n):,}".replace(",", "\u00a0")
 
 
 def fmt_usd_c(n: float) -> str:
@@ -122,31 +121,20 @@ def fmt_usd_c(n: float) -> str:
 
 
 def growth_table(dep_usd: float, total_days: int, pct: float, rate: float) -> str:
-    """Returns rows: Сегодня / Через 7дн / Через 30дн / Через 90дн / Цель."""
-    checkpoints = [0]
-    for d in [7, 30, 90]:
-        if d < total_days:
-            checkpoints.append(d)
-    checkpoints.append(total_days)
+    checkpoints = [0] + [d for d in [7, 30, 90] if d < total_days] + [total_days]
     checkpoints = sorted(set(checkpoints))
-
     lines = []
     for day in checkpoints:
         bal = dep_usd * (1 + pct / 100) ** day
         dt  = (datetime.now() + timedelta(days=day)).strftime("%d.%m.%Y")
-        if day == 0:
-            label = "Сегодня"
-        elif day == total_days:
-            label = "🎯 Цель"
-        else:
-            label = f"Через {day} дн"
-        lines.append(f"  `{label:<14}` {dt}  *{fmt_rub(bal * rate)}*  ({fmt_usd_c(bal)})")
+        lbl = "Сегодня" if day == 0 else ("\U0001f3af Цель" if day == total_days else f"Через {day} дн")
+        lines.append(f"  `{lbl:<14}` {dt}  *{fmt_rub(bal * rate)}*  ({fmt_usd_c(bal)})")
     return "\n".join(lines)
 
 
 # ─── ANALYSIS CORE ────────────────────────────────────────────────────────────
 
-async def analyze_coin(symbol: str, tf_key: str = "1h", use_ai: bool = True) -> str:
+async def analyze_coin(symbol: str, tf_key: str = "1h") -> str:
     cfg = MA_SETTINGS[tf_key]
     klines = await bybit_klines(symbol, cfg["interval"], 400)
     closes = [float(k[4]) for k in klines]
@@ -156,340 +144,314 @@ async def analyze_coin(symbol: str, tf_key: str = "1h", use_ai: bool = True) -> 
     ma_slow = calc_sma(closes, cfg["slow"])
     rsi_arr = calc_rsi(closes)
 
-    fast_last = ma_fast[-1]
-    slow_last = ma_slow[-1]
-    fast_prev = ma_fast[-2]
-    slow_prev = ma_slow[-2]
+    fl = ma_fast[-1]; sl = ma_slow[-1]
+    fp = ma_fast[-2]; sp = ma_slow[-2]
     rsi = rsi_arr[-1] if rsi_arr else 50.0
 
-    golden = fast_prev is not None and slow_prev is not None and fast_prev < slow_prev and fast_last > slow_last
-    death  = fast_prev is not None and slow_prev is not None and fast_prev > slow_prev and fast_last < slow_last
-
-    if golden:
-        cross_txt = "✨ ЗОЛОТОЙ КРЕСТ формируется!"
-    elif death:
-        cross_txt = "💀 МЁРТВЫЙ КРЕСТ формируется!"
-    elif fast_last > slow_last:
-        cross_txt = "📈 Быстрая выше медленной"
+    if fp is not None and sp is not None and fp < sp and fl > sl:
+        cross = "\u2728 ЗОЛОТОЙ КРЕСТ формируется!"
+    elif fp is not None and sp is not None and fp > sp and fl < sl:
+        cross = "\U0001f480 МЁРТВЫЙ КРЕСТ формируется!"
+    elif fl > sl:
+        cross = "\U0001f4c8 Быстрая выше медленной"
     else:
-        cross_txt = "📉 Быстрая ниже медленной"
+        cross = "\U0001f4c9 Быстрая ниже медленной"
 
-    if rsi >= 70:
-        rsi_zone = "🔴 Перекупленность"
-    elif rsi <= 30:
-        rsi_zone = "🟢 Перепроданность"
-    else:
-        rsi_zone = "🟡 Нейтральная зона"
+    rsi_zone = "\U0001f534 Перекупленность" if rsi >= 70 else "\U0001f7e2 Перепроданность" if rsi <= 30 else "\U0001f7e1 Нейтральная зона"
 
     header = (
-        f"📊 *{symbol}* | {cfg['label']}\n"
-        f"━━━━━━━━━━━━━━━━━\n"
-        f"💰 Цена: `{fmt_price(price)}`\n\n"
-        f"📈 *Скользящие средние:*\n"
-        f"  MA{cfg['fast']}: `{fmt_price(fast_last)}`\n"
-        f"  MA{cfg['slow']}: `{fmt_price(slow_last)}`\n"
-        f"  {cross_txt}\n\n"
-        f"📡 *RSI (14):* `{rsi:.1f}` — {rsi_zone}\n"
+        f"\U0001f4ca *{symbol}* | {cfg['label']}\n"
+        f"\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
+        f"\U0001f4b0 Цена: `{fmt_price(price)}`\n\n"
+        f"\U0001f4c8 MA{cfg['fast']}: `{fmt_price(fl)}`\n"
+        f"\U0001f4c9 MA{cfg['slow']}: `{fmt_price(sl)}`\n"
+        f"   {cross}\n\n"
+        f"\U0001f4e1 RSI(14): `{rsi:.1f}` — {rsi_zone}\n"
     )
 
-    if not use_ai:
-        return header
+    if not CLAUDE_API_KEY:
+        return header + "\n_Добавь CLAUDE\\_API\\_KEY для AI анализа_"
 
     prompt = (
-        f"Ты профессиональный трейдер. Проанализируй {symbol} на таймфрейме {cfg['label']}.\n\n"
-        f"ДАННЫЕ:\n"
-        f"- Цена: {price:.6f}\n"
-        f"- MA{cfg['fast']} (быстрая): {fast_last:.6f}\n"
-        f"- MA{cfg['slow']} (медленная): {slow_last:.6f}\n"
-        f"- RSI(14): {rsi:.2f}\n"
-        f"- Крест: {cross_txt}\n\n"
-        f"Дай анализ:\n"
-        f"1. Текущий тренд (1 предложение)\n"
-        f"2. Что значит RSI сейчас\n"
-        f"3. Крест — есть или нет\n"
-        f"4. Рекомендация: СПОТ или ФЬЮЧ, ЛОНГ или ШОРТ, плечо x?, вход, стоп, тейк\n"
-        f"5. Уверенность: X%\n\n"
-        f"Кратко и по делу. На русском."
+        f"Ты профессиональный трейдер. Проанализируй {symbol} на {cfg['label']}.\n"
+        f"Цена: {fmt_price(price)}, MA{cfg['fast']}: {fmt_price(fl)}, MA{cfg['slow']}: {fmt_price(sl)}, RSI: {rsi:.1f}\n"
+        f"{cross}\n\n"
+        f"Дай: 1) тренд 2) RSI 3) крест 4) ЛОНГ/ШОРТ+плечо+стоп+тейк 5) уверенность %\n"
+        f"Кратко. На русском."
     )
-    ai_text = await claude_ask(prompt, max_tokens=600)
-    return header + f"\n🤖 *AI анализ:*\n{ai_text}"
+    ai_text = await claude_ask(prompt, 500)
+    return header + f"\n\U0001f916 *AI анализ:*\n{ai_text}"
+
+
+# ─── KEYBOARDS ───────────────────────────────────────────────────────────────
+
+def main_menu_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("\U0001f310 Открыть дашборд LUNA", url=DASHBOARD_URL)],
+        [InlineKeyboardButton("\U0001f4ca Анализ монеты", callback_data="menu_analysis"),
+         InlineKeyboardButton("\U0001f535 Скринер",       callback_data="menu_screener")],
+        [InlineKeyboardButton("\U0001f4f0 Новости",        callback_data="menu_news"),
+         InlineKeyboardButton("\U0001f9ee Калькулятор",    callback_data="menu_calc")],
+        [InlineKeyboardButton("\U0001f514 Мониторинг",     callback_data="menu_monitor")],
+    ])
+
+
+def back_btn():
+    return InlineKeyboardMarkup([[InlineKeyboardButton("\u25c0\ufe0f Главное меню", callback_data="menu_back")]])
+
+
+def coin_kb():
+    coins = ["BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "DOT", "LTC"]
+    rows = []
+    row = []
+    for i, c in enumerate(coins):
+        row.append(InlineKeyboardButton(c, callback_data=f"analyze_{c}USDT"))
+        if len(row) == 5:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton("\u25c0\ufe0f Назад", callback_data="menu_back")])
+    return InlineKeyboardMarkup(rows)
+
+
+def tf_kb(symbol: str):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(v["label"], callback_data=f"tf_{symbol}_{k}")
+         for k, v in MA_SETTINGS.items()],
+        [InlineKeyboardButton("\u25c0\ufe0f Назад", callback_data="menu_analysis")]
+    ])
+
+
+def calc_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("\U0001f4c8 Депозит \u2192 Цель",       callback_data="calc_mode1")],
+        [InlineKeyboardButton("\U0001f3af Цель + Срок \u2192 Депозит", callback_data="calc_mode2")],
+        [InlineKeyboardButton("\u25c0\ufe0f Назад",                    callback_data="menu_back")],
+    ])
 
 
 # ─── COMMANDS ────────────────────────────────────────────────────────────────
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    kb = [
-        [InlineKeyboardButton("📊 Анализ монеты", callback_data="menu_analysis"),
-         InlineKeyboardButton("🔵 Скринер",       callback_data="menu_screener")],
-        [InlineKeyboardButton("📰 Новости",        callback_data="menu_news"),
-         InlineKeyboardButton("🧮 Калькулятор",    callback_data="menu_calc")],
-        [InlineKeyboardButton("🔔 Мониторинг ON",  callback_data="menu_monitor")],
-    ]
     await update.message.reply_text(
-        "🌙 *LUNA — Crypto Intelligence*\n\n"
-        "Выбери раздел или используй команды:\n"
-        "/analysis — анализ монеты\n"
-        "/screener — скринер сигналов\n"
-        "/news — новости рынка\n"
-        "/calc — калькулятор\n"
-        "/monitor — автомониторинг\n",
+        "\U0001f319 *LUNA — Crypto Intelligence*\n\nВыбери раздел:",
         parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(kb)
+        reply_markup=main_menu_kb()
     )
 
 
-async def cmd_analysis(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    args   = ctx.args
-    symbol = args[0].upper() if args else "BTCUSDT"
-    tf_key = args[1].lower() if len(args) > 1 else "1h"
-    if tf_key not in MA_SETTINGS:
-        tf_key = "1h"
+# ─── CALLBACK HANDLER ────────────────────────────────────────────────────────
 
-    kb = [[InlineKeyboardButton(v["label"], callback_data=f"tf_{symbol}_{k}")
-           for k, v in MA_SETTINGS.items()]]
-    msg = await update.message.reply_text(
-        f"⏳ Анализирую *{symbol}*...", parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(kb)
-    )
+async def send_or_edit(q, text: str, kb=None):
     try:
-        text = await analyze_coin(symbol, tf_key)
-        await msg.edit_text(text, parse_mode="Markdown",
-                            reply_markup=InlineKeyboardMarkup(kb))
-    except Exception as e:
-        await msg.edit_text(f"❌ Ошибка: {e}")
+        await q.edit_message_text(text, parse_mode="Markdown",
+                                   reply_markup=kb, disable_web_page_preview=True)
+    except Exception:
+        pass
 
-
-async def cmd_screener(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    msg = await update.message.reply_text("🔵 Сканирую рынок...")
-    results = []
-    for coin in TOP_COINS:
-        try:
-            klines = await bybit_klines(coin, "60", 200)
-            closes = [float(k[4]) for k in klines]
-            price  = closes[-1]
-            ma25   = calc_sma(closes, 25)
-            ma99   = calc_sma(closes, 99)
-            rsi_arr = calc_rsi(closes)
-            rsi    = rsi_arr[-1] if rsi_arr else 50
-            fast   = ma25[-1]; slow = ma99[-1]
-            bullish = fast > slow and rsi < 65
-            bearish = fast < slow and rsi > 35
-            signal  = "ЛОНГ 📈" if bullish else "ШОРТ 📉" if bearish else "—"
-            strength = min(95, 50 + abs(rsi - 50) * 0.8) if (bullish or bearish) else 30
-            results.append((coin, price, rsi, signal, strength))
-        except Exception:
-            pass
-
-    results.sort(key=lambda x: -x[4])
-    lines = ["🔵 *Скринер LUNA* — Топ сигналы\n"]
-    for coin, price, rsi, signal, strength in results[:10]:
-        bar = "█" * int(strength / 10) + "░" * (10 - int(strength / 10))
-        lines.append(f"*{coin}* — {signal}\n  Цена: `{fmt_price(price)}` | RSI: `{rsi:.1f}` | `{bar}` {strength:.0f}%\n")
-
-    await msg.edit_text("\n".join(lines), parse_mode="Markdown")
-
-
-async def cmd_news(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    msg = await update.message.reply_text("📰 Загружаю новости через Claude...")
-    try:
-        prompt = (
-            "Сгенерируй 6 актуальных крипто новостей для трейдера. "
-            "Формат каждой: ЗАГОЛОВОК, 1-2 предложения, влияние (📈 Рост / 📉 Падение / ➡️ Нейтрально). "
-            "Темы: листинги, регуляции, партнёрства, макро. На русском."
-        )
-        text = await claude_ask(prompt, max_tokens=1000)
-        await msg.edit_text(f"📰 *Новости рынка*\n\n{text}", parse_mode="Markdown")
-    except Exception as e:
-        await msg.edit_text(f"❌ Ошибка: {e}")
-
-
-async def cmd_calc(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🧮 *Калькулятор LUNA* — суммы в рублях\n\n"
-        "Режим 1 — депозит → цель:\n"
-        "`/calc 100000 1000000`\n\n"
-        "Режим 2 — цель + срок → нужный депозит:\n"
-        "`/calc_need 1000000 180`\n\n"
-        "_Курс USDT/RUB подтягивается автоматически с Bybit_",
-        parse_mode="Markdown"
-    )
-
-
-async def cmd_calc_deposit(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Usage: /calc [deposit_rub] [goal_rub]"""
-    args = ctx.args
-    if len(args) < 2:
-        await update.message.reply_text(
-            "Использование: `/calc 100000 1000000`\n_(депозит ₽ → цель ₽)_",
-            parse_mode="Markdown"
-        )
-        return
-    dep_rub  = float(args[0])
-    goal_rub = float(args[1])
-    if goal_rub <= dep_rub:
-        await update.message.reply_text("❌ Цель должна быть больше депозита")
-        return
-
-    msg  = await update.message.reply_text("⏳ Считаю...")
-    rate = await get_usdt_rate()
-    dep_usd  = dep_rub  / rate
-    goal_usd = goal_rub / rate
-
-    lines = [
-        "🧮 *Калькулятор* — депозит → цель",
-        f"Депозит: *{fmt_rub(dep_rub)}* ({fmt_usd_c(dep_usd)})",
-        f"Цель:    *{fmt_rub(goal_rub)}* ({fmt_usd_c(goal_usd)})",
-        f"Курс: {rate:.0f} ₽/USDT\n",
-    ]
-    for label, pct in SCENARIOS:
-        days       = math.ceil(math.log(goal_usd / dep_usd) / math.log(1 + pct / 100))
-        final_usd  = dep_usd * (1 + pct / 100) ** days
-        profit_rub = (final_usd - dep_usd) * rate
-        day1_rub   = dep_usd * pct / 100 * rate
-        target_dt  = (datetime.now() + timedelta(days=days)).strftime("%d.%m.%Y")
-        table      = growth_table(dep_usd, days, pct, rate)
-        lines.append(
-            f"*{label}* — {pct}%/день\n"
-            f"  Срок: *{days} дней* (до {target_dt})\n"
-            f"  Прибыль за весь срок: *+{fmt_rub(profit_rub)}*\n"
-            f"  Прибыль в первый день: *+{fmt_rub(day1_rub)}*\n"
-            f"{table}\n"
-        )
-    await msg.edit_text("\n".join(lines), parse_mode="Markdown")
-
-
-async def cmd_calc_need(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Usage: /calc_need [goal_rub] [days]"""
-    args = ctx.args
-    if len(args) < 2:
-        await update.message.reply_text(
-            "Использование: `/calc_need 1000000 180`\n_(цель ₽ + срок → нужный депозит)_",
-            parse_mode="Markdown"
-        )
-        return
-    goal_rub = float(args[0])
-    days     = int(args[1])
-
-    msg      = await update.message.reply_text("⏳ Считаю...")
-    rate     = await get_usdt_rate()
-    goal_usd = goal_rub / rate
-
-    lines = [
-        "🧮 *Калькулятор* — цель + срок → депозит",
-        f"Цель:  *{fmt_rub(goal_rub)}* ({fmt_usd_c(goal_usd)})",
-        f"Срок:  *{days} дней*",
-        f"Курс: {rate:.0f} ₽/USDT\n",
-    ]
-    for label, pct in SCENARIOS:
-        dep_usd    = goal_usd / (1 + pct / 100) ** days
-        dep_rub    = dep_usd * rate
-        profit_rub = (goal_usd - dep_usd) * rate
-        day1_rub   = dep_usd * pct / 100 * rate
-        dayL_rub   = goal_usd * pct / 100 * rate
-        table      = growth_table(dep_usd, days, pct, rate)
-        lines.append(
-            f"*{label}* — {pct}%/день\n"
-            f"  Нужен депозит: *{fmt_rub(dep_rub)}* ({fmt_usd_c(dep_usd)})\n"
-            f"  Прибыль первый день: *+{fmt_rub(day1_rub)}*\n"
-            f"  Прибыль последний день: *+{fmt_rub(dayL_rub)}*\n"
-            f"  Итого прибыль: *+{fmt_rub(profit_rub)}*\n"
-            f"{table}\n"
-        )
-    await msg.edit_text("\n".join(lines), parse_mode="Markdown")
-
-
-async def cmd_monitor(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    if chat_id in MONITORING_CHATS:
-        MONITORING_CHATS.discard(chat_id)
-        await update.message.reply_text("🔕 Автомониторинг *выключен*", parse_mode="Markdown")
-    else:
-        MONITORING_CHATS.add(chat_id)
-        await update.message.reply_text(
-            "🔔 Автомониторинг *включён*\n"
-            "Буду уведомлять при:\n"
-            "• Золотом / мёртвом кресте\n"
-            "• RSI > 75 или < 25\n"
-            "Проверка каждые 30 минут.",
-            parse_mode="Markdown"
-        )
-
-
-# ─── CALLBACK HANDLER ─────────────────────────────────────────────────────────
 
 async def on_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     data = q.data
+    chat_id = q.message.chat_id
 
-    if data.startswith("tf_"):
+    # ── Главное меню ──
+    if data == "menu_back":
+        await send_or_edit(q, "\U0001f319 *LUNA — Crypto Intelligence*\n\nВыбери раздел:", main_menu_kb())
+
+    # ── Анализ: выбор монеты ──
+    elif data == "menu_analysis":
+        await send_or_edit(q, "\U0001f4ca *Анализ монеты*\n\nВыбери монету:", coin_kb())
+
+    # ── Анализ: выбор таймфрейма ──
+    elif data.startswith("analyze_"):
+        symbol = data.split("_", 1)[1]
+        await send_or_edit(q, f"\U0001f4ca *{symbol}*\n\nВыбери таймфрейм:", tf_kb(symbol))
+
+    # ── Анализ: запуск ──
+    elif data.startswith("tf_"):
         _, symbol, tf_key = data.split("_", 2)
-        kb = [[InlineKeyboardButton(v["label"], callback_data=f"tf_{symbol}_{k}")
-               for k, v in MA_SETTINGS.items()]]
-        await q.edit_message_text(f"⏳ Анализирую *{symbol}* ({MA_SETTINGS[tf_key]['label']})...",
-                                   parse_mode="Markdown")
+        kb = tf_kb(symbol)
+        await send_or_edit(q, f"\u23f3 Анализирую *{symbol}* ({MA_SETTINGS[tf_key]['label']})...", kb)
         try:
             text = await analyze_coin(symbol, tf_key)
-            await q.edit_message_text(text, parse_mode="Markdown",
-                                       reply_markup=InlineKeyboardMarkup(kb))
+            await send_or_edit(q, text, kb)
         except Exception as e:
-            await q.edit_message_text(f"❌ Ошибка: {e}")
+            await send_or_edit(q, f"\u274c Ошибка: {e}", back_btn())
 
-    elif data == "menu_analysis":
-        kb = [[InlineKeyboardButton(c, callback_data=f"tf_{c}_1h") for c in TOP_COINS[:5]],
-              [InlineKeyboardButton(c, callback_data=f"tf_{c}_1h") for c in TOP_COINS[5:]]]
-        await q.edit_message_text("Выбери монету:", reply_markup=InlineKeyboardMarkup(kb))
-
+    # ── Скринер ──
     elif data == "menu_screener":
-        await q.edit_message_text("⏳ Сканирую...")
+        await send_or_edit(q, "\u23f3 Сканирую 10 монет...", back_btn())
         results = []
         for coin in TOP_COINS:
             try:
                 klines = await bybit_klines(coin, "60", 200)
                 closes = [float(k[4]) for k in klines]
                 price  = closes[-1]
-                ma25   = calc_sma(closes, 25); ma99 = calc_sma(closes, 99)
-                rsi_arr = calc_rsi(closes); rsi = rsi_arr[-1] if rsi_arr else 50
-                fast   = ma25[-1]; slow = ma99[-1]
-                bullish = fast > slow and rsi < 65
-                bearish = fast < slow and rsi > 35
-                signal  = "ЛОНГ 📈" if bullish else "ШОРТ 📉" if bearish else "—"
-                strength = min(95, 50 + abs(rsi - 50) * 0.8) if (bullish or bearish) else 30
-                results.append((coin, price, rsi, signal, strength))
+                ma25 = calc_sma(closes, 25)
+                ma99 = calc_sma(closes, 99)
+                rsi_arr = calc_rsi(closes)
+                rsi = rsi_arr[-1] if rsi_arr else 50
+                fast = ma25[-1]; slow = ma99[-1]
+                bull = fast > slow and rsi < 65
+                bear = fast < slow and rsi > 35
+                sig  = "ЛОНГ \U0001f4c8" if bull else "\u0428\u041e\u0420\u0422 \U0001f4c9" if bear else "\u2014"
+                strength = min(95, 50 + abs(rsi - 50) * 0.8) if (bull or bear) else 25
+                results.append((coin, price, rsi, sig, strength))
             except Exception:
                 pass
         results.sort(key=lambda x: -x[4])
-        lines = ["🔵 *Скринер LUNA*\n"]
-        for coin, price, rsi, signal, strength in results[:8]:
-            lines.append(f"*{coin}* — {signal} | RSI `{rsi:.1f}` | `{strength:.0f}%`")
-        await q.edit_message_text("\n".join(lines), parse_mode="Markdown")
+        lines = ["\U0001f535 *Скринер LUNA* — Топ сигналы\n"]
+        for coin, price, rsi, sig, strength in results[:10]:
+            bar = "\u2588" * int(strength / 10) + "\u2591" * (10 - int(strength / 10))
+            lines.append(f"*{coin}* — {sig}\n  `{fmt_price(price)}` RSI:`{rsi:.1f}` `{bar}` {strength:.0f}%\n")
+        await send_or_edit(q, "\n".join(lines), back_btn())
 
+    # ── Новости ──
     elif data == "menu_news":
-        await q.edit_message_text("📰 Загружаю новости...")
+        await send_or_edit(q, "\U0001f4f0 Загружаю новости...", back_btn())
         try:
             text = await claude_ask(
                 "Сгенерируй 6 актуальных крипто новостей для трейдера. "
-                "Каждая: заголовок, 1-2 предложения, влияние. На русском.", 1000)
-            await q.edit_message_text(f"📰 *Новости рынка*\n\n{text}", parse_mode="Markdown")
+                "Каждая: ЗАГОЛОВОК, 1-2 предложения, влияние \U0001f4c8/\U0001f4c9/\u27a1\ufe0f. На русском.", 1000)
+            await send_or_edit(q, f"\U0001f4f0 *Новости рынка*\n\n{text}", back_btn())
         except Exception as e:
-            await q.edit_message_text(f"❌ Ошибка: {e}")
+            await send_or_edit(q, f"\u274c Ошибка: {e}", back_btn())
 
-    elif data == "menu_calc":
-        await q.edit_message_text(
-            "🧮 *Калькулятор* — суммы в рублях\n\n"
-            "`/calc 100000 1000000` — депозит → цель\n"
-            "`/calc_need 1000000 180` — цель + срок → депозит",
-            parse_mode="Markdown"
-        )
-
+    # ── Мониторинг ──
     elif data == "menu_monitor":
-        chat_id = q.message.chat_id
         if chat_id in MONITORING_CHATS:
             MONITORING_CHATS.discard(chat_id)
-            await q.edit_message_text("🔕 Автомониторинг выключен")
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("\U0001f514 Включить мониторинг", callback_data="menu_monitor")],
+                [InlineKeyboardButton("\u25c0\ufe0f Главное меню", callback_data="menu_back")]
+            ])
+            await send_or_edit(q, "\U0001f515 *Мониторинг выключен*", kb)
         else:
             MONITORING_CHATS.add(chat_id)
-            await q.edit_message_text("🔔 Автомониторинг включён (каждые 30 мин)")
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("\U0001f515 Выключить мониторинг", callback_data="menu_monitor")],
+                [InlineKeyboardButton("\u25c0\ufe0f Главное меню", callback_data="menu_back")]
+            ])
+            await send_or_edit(q,
+                "\U0001f514 *Мониторинг включён*\n\n"
+                "Уведомлю при:\n"
+                "\u2022 Золотом / мёртвом кресте\n"
+                "\u2022 RSI > 75 или < 25\n\n"
+                "Проверка каждые 30 минут.", kb)
+
+    # ── Калькулятор: меню ──
+    elif data == "menu_calc":
+        await send_or_edit(q, "\U0001f9ee *Калькулятор LUNA*\n\nВыбери режим:", calc_kb())
+
+    elif data == "calc_mode1":
+        WAITING_INPUT[chat_id] = "calc1"
+        await send_or_edit(q,
+            "\U0001f9ee *Депозит \u2192 Цель*\n\n"
+            "Напиши два числа через пробел:\n"
+            "`депозит_\u20bd цель_\u20bd`\n\n"
+            "\u041f\u0440\u0438\u043c\u0435\u0440: `100000 1000000`",
+            InlineKeyboardMarkup([[InlineKeyboardButton("\u25c0\ufe0f Назад", callback_data="menu_calc")]]))
+
+    elif data == "calc_mode2":
+        WAITING_INPUT[chat_id] = "calc2"
+        await send_or_edit(q,
+            "\U0001f9ee *Цель + Срок \u2192 Депозит*\n\n"
+            "Напиши два числа через пробел:\n"
+            "`цель_\u20bd срок_дней`\n\n"
+            "\u041f\u0440\u0438\u043c\u0435\u0440: `1000000 180`",
+            InlineKeyboardMarkup([[InlineKeyboardButton("\u25c0\ufe0f Назад", callback_data="menu_calc")]]))
+
+
+# ─── MESSAGE HANDLER (калькулятор) ────────────────────────────────────────────
+
+async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    mode = WAITING_INPUT.get(chat_id)
+    if not mode:
+        return
+
+    text = update.message.text.strip()
+    parts = text.replace(",", ".").split()
+
+    if len(parts) < 2:
+        await update.message.reply_text(
+            "\u274c Нужно два числа через пробел.\nПример: `100000 1000000`",
+            parse_mode="Markdown")
+        return
+
+    try:
+        a, b = float(parts[0]), float(parts[1])
+    except ValueError:
+        await update.message.reply_text(
+            "\u274c Введи числа, например: `100000 1000000`", parse_mode="Markdown")
+        return
+
+    WAITING_INPUT.pop(chat_id, None)
+    msg = await update.message.reply_text("\u23f3 Считаю...")
+    rate = await get_usdt_rate()
+
+    result_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("\U0001f504 Ещё расчёт", callback_data="menu_calc")],
+        [InlineKeyboardButton("\u25c0\ufe0f Главное меню", callback_data="menu_back")]
+    ])
+
+    if mode == "calc1":
+        dep_rub, goal_rub = a, b
+        if goal_rub <= dep_rub:
+            await msg.edit_text("\u274c Цель должна быть больше депозита")
+            return
+        dep_usd  = dep_rub / rate
+        goal_usd = goal_rub / rate
+        lines = [
+            "\U0001f9ee *Калькулятор* — депозит \u2192 цель",
+            f"Депозит: *{fmt_rub(dep_rub)}* ({fmt_usd_c(dep_usd)})",
+            f"Цель:    *{fmt_rub(goal_rub)}* ({fmt_usd_c(goal_usd)})",
+            f"Курс: {rate:.0f} \u20bd/USDT\n",
+        ]
+        for label, pct in SCENARIOS:
+            days      = math.ceil(math.log(goal_usd / dep_usd) / math.log(1 + pct / 100))
+            final_usd = dep_usd * (1 + pct / 100) ** days
+            profit    = (final_usd - dep_usd) * rate
+            day1      = dep_usd * pct / 100 * rate
+            dt        = (datetime.now() + timedelta(days=days)).strftime("%d.%m.%Y")
+            table     = growth_table(dep_usd, days, pct, rate)
+            lines.append(
+                f"*{label}* — {pct}%/день\n"
+                f"  Срок: *{days} дн* (до {dt})\n"
+                f"  Прибыль: *+{fmt_rub(profit)}*\n"
+                f"  День 1: *+{fmt_rub(day1)}*\n"
+                f"{table}\n"
+            )
+
+    else:  # calc2
+        goal_rub = a
+        days = int(b)
+        goal_usd = goal_rub / rate
+        lines = [
+            "\U0001f9ee *Калькулятор* — цель + срок \u2192 депозит",
+            f"Цель:  *{fmt_rub(goal_rub)}* ({fmt_usd_c(goal_usd)})",
+            f"Срок:  *{days} дней*",
+            f"Курс: {rate:.0f} \u20bd/USDT\n",
+        ]
+        for label, pct in SCENARIOS:
+            dep_usd = goal_usd / (1 + pct / 100) ** days
+            dep_rub = dep_usd * rate
+            profit  = (goal_usd - dep_usd) * rate
+            d1      = dep_usd * pct / 100 * rate
+            dL      = goal_usd * pct / 100 * rate
+            table   = growth_table(dep_usd, days, pct, rate)
+            lines.append(
+                f"*{label}* — {pct}%/день\n"
+                f"  Нужен депозит: *{fmt_rub(dep_rub)}* ({fmt_usd_c(dep_usd)})\n"
+                f"  День 1: *+{fmt_rub(d1)}* | Посл.день: *+{fmt_rub(dL)}*\n"
+                f"  Прибыль: *+{fmt_rub(profit)}*\n"
+                f"{table}\n"
+            )
+
+    await msg.edit_text("\n".join(lines), parse_mode="Markdown", reply_markup=result_kb)
 
 
 # ─── AUTO MONITORING LOOP ─────────────────────────────────────────────────────
@@ -504,22 +466,25 @@ async def monitoring_loop(app: Application):
                     klines = await bybit_klines(coin, "60", 100)
                     closes = [float(k[4]) for k in klines]
                     price  = closes[-1]
-                    ma25   = calc_sma(closes, 25); ma99 = calc_sma(closes, 99)
-                    rsi_arr = calc_rsi(closes); rsi = rsi_arr[-1] if rsi_arr else 50
-                    fl = ma25[-1]; sl = ma99[-1]; fp = ma25[-2]; sp = ma99[-2]
+                    ma25 = calc_sma(closes, 25)
+                    ma99 = calc_sma(closes, 99)
+                    rsi_arr = calc_rsi(closes)
+                    rsi = rsi_arr[-1] if rsi_arr else 50
+                    fl = ma25[-1]; sl = ma99[-1]
+                    fp = ma25[-2]; sp = ma99[-2]
                     if fp < sp and fl > sl:
-                        alerts.append(f"✨ *{coin}* — ЗОЛОТОЙ КРЕСТ на 1ч | `{fmt_price(price)}`")
+                        alerts.append(f"\u2728 *{coin}* — ЗОЛОТОЙ КРЕСТ | `{fmt_price(price)}`")
                     elif fp > sp and fl < sl:
-                        alerts.append(f"💀 *{coin}* — МЁРТВЫЙ КРЕСТ на 1ч | `{fmt_price(price)}`")
+                        alerts.append(f"\U0001f480 *{coin}* — МЁРТВЫЙ КРЕСТ | `{fmt_price(price)}`")
                     if rsi >= 78:
-                        alerts.append(f"🔴 *{coin}* — RSI `{rsi:.1f}` перекупленность!")
+                        alerts.append(f"\U0001f534 *{coin}* — RSI `{rsi:.1f}` перекупленность!")
                     elif rsi <= 22:
-                        alerts.append(f"🟢 *{coin}* — RSI `{rsi:.1f}` перепроданность!")
+                        alerts.append(f"\U0001f7e2 *{coin}* — RSI `{rsi:.1f}` перепроданность!")
                 except Exception:
                     pass
 
             if alerts:
-                msg = "🚨 *LUNA Мониторинг*\n\n" + "\n".join(alerts)
+                msg = "\U0001f6a8 *LUNA Мониторинг*\n\n" + "\n".join(alerts)
                 for chat_id in list(MONITORING_CHATS):
                     try:
                         await app.bot.send_message(chat_id, msg, parse_mode="Markdown")
@@ -534,19 +499,14 @@ async def monitoring_loop(app: Application):
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    app.add_handler(CommandHandler("start",     cmd_start))
-    app.add_handler(CommandHandler("analysis",  cmd_analysis))
-    app.add_handler(CommandHandler("screener",  cmd_screener))
-    app.add_handler(CommandHandler("news",      cmd_news))
-    app.add_handler(CommandHandler("calc",      cmd_calc_deposit))
-    app.add_handler(CommandHandler("calc_need", cmd_calc_need))
-    app.add_handler(CommandHandler("monitor",   cmd_monitor))
+    app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CallbackQueryHandler(on_callback))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
 
     loop = asyncio.get_event_loop()
     loop.create_task(monitoring_loop(app))
 
-    print("🌙 LUNA Bot запущен")
+    print("\U0001f319 LUNA Bot запущен")
     app.run_polling(drop_pending_updates=True)
 
 
