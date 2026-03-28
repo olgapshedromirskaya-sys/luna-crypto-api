@@ -10,7 +10,7 @@ from telegram.ext import (
 )
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "YOUR_BOT_TOKEN")
+TELEGRAM_TOKEN = os.getenv("BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN", "")
 CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "YOUR_CLAUDE_API_KEY")
 BYBIT_BASE     = "https://api.bybit.com"
 CLAUDE_URL     = "https://api.anthropic.com/v1/messages"
