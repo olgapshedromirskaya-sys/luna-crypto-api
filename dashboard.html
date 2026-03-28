@@ -164,16 +164,16 @@
   <!-- Controls -->
   <div style="background:rgba(0,212,255,.06);border:1px solid rgba(0,212,255,.2);border-radius:10px;padding:12px 18px;margin-bottom:16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
     <span style="font-size:12px;color:var(--muted);font-family:var(--font-mono);">🤖 AI МОДЕЛЬ:</span>
-    <select id="ai-model-select" style="flex:1;min-width:220px;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--font-mono);font-size:12px;outline:none;">
-      <option value="openai/gpt-4.1-mini">GPT-4.1 Mini (быстро, дёшево)</option>
-      <option value="openai/gpt-4.1">GPT-4.1</option>
-      <option value="openai/gpt-4o-mini">GPT-4o Mini</option>
-      <option value="anthropic/claude-sonnet-4.6">Claude Sonnet 4.6 ⭐</option>
-      <option value="anthropic/claude-opus-4.6">Claude Opus 4.6 (лучший)</option>
-      <option value="anthropic/claude-opus-4.5">Claude Opus 4.5</option>
-      <option value="google/gemini-2.5-flash">Gemini 2.5 Flash</option>
-      <option value="meta-llama/llama-3.3-70b-instruct">Llama 3.3 70B</option>
-      <option value="deepseek/deepseek-r1-distill-llama-70b">DeepSeek R1 Llama 70B</option>
+    <select id="ai-model-select" style="flex:1;min-width:260px;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--font-mono);font-size:12px;outline:none;">
+      <option value="anthropic/claude-sonnet-4.6">anthropic/claude-sonnet-4.6</option>
+      <option value="anthropic/claude-opus-4.6">anthropic/claude-opus-4.6</option>
+      <option value="openai/gpt-4.1">openai/gpt-4.1</option>
+      <option value="openai/gpt-4o-mini">openai/gpt-4o-mini</option>
+      <option value="openai/gpt-4.1-mini">openai/gpt-4.1-mini</option>
+      <option value="google/gemini-2.5-flash">google/gemini-2.5-flash</option>
+      <option value="anthropic/claude-opus-4.5">anthropic/claude-opus-4.5</option>
+      <option value="meta-llama/llama-3.3-70b-instruct">meta-llama/llama-3.3-70b-instruct</option>
+      <option value="deepseek/deepseek-r1-distill-llama-70b">deepseek/deepseek-r1-distill-llama-70b</option>
     </select>
   </div>
 
@@ -420,7 +420,7 @@
 <script>
 // ─── STATE ────────────────────────────────────────────────────────────────────
 const AI_API_URL  = 'https://api.vsellm.ru/v1/chat/completions';
-const AI_MODEL    = 'openai/gpt-4.1-mini'; // по умолчанию // можно менять: openai/gpt-4o, anthropic/claude-sonnet-4.5 и др.
+const AI_MODEL    = 'anthropic/claude-sonnet-4.6'; // по умолчанию // можно менять: openai/gpt-4o, anthropic/claude-sonnet-4.5 и др.
 const BYBIT_BASE  = 'https://api.bybit.com';
 let claudeApiKey  = localStorage.getItem('luna_api_key') || '';
 
@@ -449,15 +449,15 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('ai-model-select')?.addEventListener('change', function() {
     localStorage.setItem('luna_ai_model', this.value);
     const labels = {
-      'openai/gpt-4.1-mini': 'GPT-4.1 Mini',
-      'openai/gpt-4.1': 'GPT-4.1',
-      'openai/gpt-4o-mini': 'GPT-4o Mini',
-      'anthropic/claude-sonnet-4.6': 'Claude Sonnet 4.6',
-      'anthropic/claude-opus-4.6': 'Claude Opus 4.6',
-      'anthropic/claude-opus-4.5': 'Claude Opus 4.5',
-      'google/gemini-2.5-flash': 'Gemini 2.5 Flash',
-      'meta-llama/llama-3.3-70b-instruct': 'Llama 3.3 70B',
-      'deepseek/deepseek-r1-distill-llama-70b': 'DeepSeek R1 70B',
+      'anthropic/claude-sonnet-4.6': 'anthropic/claude-sonnet-4.6',
+      'anthropic/claude-opus-4.6': 'anthropic/claude-opus-4.6',
+      'openai/gpt-4.1': 'openai/gpt-4.1',
+      'openai/gpt-4o-mini': 'openai/gpt-4o-mini',
+      'openai/gpt-4.1-mini': 'openai/gpt-4.1-mini',
+      'google/gemini-2.5-flash': 'google/gemini-2.5-flash',
+      'anthropic/claude-opus-4.5': 'anthropic/claude-opus-4.5',
+      'meta-llama/llama-3.3-70b-instruct': 'meta-llama/llama-3.3-70b-instruct',
+      'deepseek/deepseek-r1-distill-llama-70b': 'deepseek/deepseek-r1-distill-llama-70b',
     };
     const lbl = document.getElementById('current-model-label');
     if (lbl) lbl.textContent = labels[this.value] || this.value;
