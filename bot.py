@@ -11,10 +11,11 @@ from telegram.ext import (
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 TELEGRAM_TOKEN = os.getenv("BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN", "")
-CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "")
-DASHBOARD_URL  = os.getenv("DASHBOARD_URL", "https://olgapshedromirskaya-sys.github.io/luna-crypto-api/dashboard.html")
-BYBIT_BASE     = "https://api.bybit.com"
-CLAUDE_URL     = "https://api.anthropic.com/v1/messages"
+AI_API_KEY    = os.getenv("AI_API_KEY", "")   # ключ с vsellm.ru
+AI_API_URL    = "https://api.vsellm.ru/v1/chat/completions"
+AI_MODEL      = os.getenv("AI_MODEL", "openai/gpt-4o-mini")
+DASHBOARD_URL = os.getenv("DASHBOARD_URL", "https://olgapshedromirskaya-sys.github.io/luna-crypto-api/dashboard.html")
+BYBIT_BASE    = "https://api.bybit.com"
 
 MA_SETTINGS = {
     "15m": {"interval": "15",  "fast": 15,  "slow": 30,  "label": "15 мин"},
@@ -73,22 +74,22 @@ def calc_rsi(closes: list, period: int = 14) -> list:
     return rsi
 
 
-async def claude_ask(prompt: str, max_tokens: int = 800) -> str:
+async def ai_ask(prompt: str, max_tokens: int = 800) -> str:
+    """Запрос к AI через vsellm.ru (OpenAI-совместимый API)."""
     headers = {
         "Content-Type": "application/json",
-        "x-api-key": CLAUDE_API_KEY,
-        "anthropic-version": "2023-06-01",
+        "Authorization": f"Bearer {AI_API_KEY}",
     }
     body = {
-        "model": "claude-sonnet-4-20250514",
+        "model": AI_MODEL,
         "max_tokens": max_tokens,
         "messages": [{"role": "user", "content": prompt}],
     }
     async with aiohttp.ClientSession() as s:
-        async with s.post(CLAUDE_URL, headers=headers, json=body) as r:
+        async with s.post(AI_API_URL, headers=headers, json=body) as r:
             d = await r.json()
-    if "content" in d and d["content"]:
-        return d["content"][0]["text"]
+    if "choices" in d and d["choices"]:
+        return d["choices"][0]["message"]["content"]
     raise ValueError(str(d.get("error", d)))
 
 
@@ -169,7 +170,7 @@ async def analyze_coin(symbol: str, tf_key: str = "1h") -> str:
         f"\U0001f4e1 RSI(14): `{rsi:.1f}` — {rsi_zone}\n"
     )
 
-    if not CLAUDE_API_KEY:
+    if not AI_API_KEY:
         return header + "\n_Добавь CLAUDE\\_API\\_KEY для AI анализа_"
 
     prompt = (
@@ -179,15 +180,17 @@ async def analyze_coin(symbol: str, tf_key: str = "1h") -> str:
         f"Дай: 1) тренд 2) RSI 3) крест 4) ЛОНГ/ШОРТ+плечо+стоп+тейк 5) уверенность %\n"
         f"Кратко. На русском."
     )
-    ai_text = await claude_ask(prompt, 500)
+    ai_text = await ai_ask(prompt, 500)
     return header + f"\n\U0001f916 *AI анализ:*\n{ai_text}"
 
 
 # ─── KEYBOARDS ───────────────────────────────────────────────────────────────
 
 def main_menu_kb():
+    from telegram import WebAppInfo
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("\U0001f310 Открыть дашборд LUNA", url=DASHBOARD_URL)],
+        [InlineKeyboardButton("\U0001f310 Открыть дашборд LUNA",
+                              web_app=WebAppInfo(url=DASHBOARD_URL))],
         [InlineKeyboardButton("\U0001f4ca Анализ монеты", callback_data="menu_analysis"),
          InlineKeyboardButton("\U0001f535 Скринер",       callback_data="menu_screener")],
         [InlineKeyboardButton("\U0001f4f0 Новости",        callback_data="menu_news"),
@@ -313,7 +316,7 @@ async def on_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data == "menu_news":
         await send_or_edit(q, "\U0001f4f0 Загружаю новости...", back_btn())
         try:
-            text = await claude_ask(
+            text = await ai_ask(
                 "Сгенерируй 6 актуальных крипто новостей для трейдера. "
                 "Каждая: ЗАГОЛОВОК, 1-2 предложения, влияние \U0001f4c8/\U0001f4c9/\u27a1\ufe0f. На русском.", 1000)
             await send_or_edit(q, f"\U0001f4f0 *Новости рынка*\n\n{text}", back_btn())
