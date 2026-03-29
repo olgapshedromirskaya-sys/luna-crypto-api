@@ -455,6 +455,10 @@ document.addEventListener('DOMContentLoaded', () => {
   updateTime();
   setInterval(updateTime, 1000);
   renderJournal();
+  // Автоматически подтягиваем курс при загрузке
+  fetchRate();
+  // Обновляем курс каждые 60 секунд
+  setInterval(fetchRate, 60000);
   // Restore saved model
   const savedModel = localStorage.getItem('luna_ai_model');
   if (savedModel) {
@@ -1055,18 +1059,34 @@ function syncAll(){ syncCalc1(); syncCalc2(); }
 function updateRateConversions(){ syncAll(); }
 
 async function fetchRate(){
-  document.getElementById('rate-status').textContent = '⏳ Загружаю...';
+  const statusEl = document.getElementById('rate-status');
+  if(statusEl) statusEl.textContent = '⏳';
   try {
     const r = await fetch('https://api.bybit.com/v5/market/tickers?category=spot&symbol=USDTRUB');
     const d = await r.json();
     const price = d?.result?.list?.[0]?.lastPrice;
-    if(price){
-      document.getElementById('usd-rate').value=Math.round(+price);
+    if(price && +price > 1){
+      const rate = Math.round(+price);
+      document.getElementById('usd-rate').value = rate;
       syncAll();
-      document.getElementById('rate-status').textContent='✓ '+Math.round(+price)+' ₽/USDT';
-    } else throw new Error();
+      if(statusEl) statusEl.textContent = '✓ актуальный';
+      if(statusEl) statusEl.style.color = 'var(--green)';
+    } else throw new Error('no price');
   } catch {
-    document.getElementById('rate-status').textContent = 'Введи курс вручную';
+    // Fallback: try USDT price via another endpoint
+    try {
+      const r2 = await fetch('https://api.bybit.com/v5/market/tickers?category=spot&symbol=RUBUSD');
+      const d2 = await r2.json();
+      const p2 = d2?.result?.list?.[0]?.lastPrice;
+      if(p2 && +p2 > 0){
+        const rate = Math.round(1 / +p2);
+        document.getElementById('usd-rate').value = rate;
+        syncAll();
+        if(statusEl) { statusEl.textContent = '✓ актуальный'; statusEl.style.color = 'var(--green)'; }
+      } else throw new Error();
+    } catch {
+      if(statusEl) { statusEl.textContent = 'авто недоступен'; statusEl.style.color = 'var(--muted)'; }
+    }
   }
 }
 
