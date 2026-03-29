@@ -1060,34 +1060,40 @@ function updateRateConversions(){ syncAll(); }
 
 async function fetchRate(){
   const statusEl = document.getElementById('rate-status');
-  if(statusEl) statusEl.textContent = '⏳';
+  if(statusEl) { statusEl.textContent = '⏳'; statusEl.style.color = 'var(--muted)'; }
+
+  const setRate = (rate) => {
+    document.getElementById('usd-rate').value = rate;
+    syncAll();
+    if(statusEl) { statusEl.textContent = '✓ актуальный'; statusEl.style.color = 'var(--green)'; }
+  };
+
+  // 1. Пробуем exchangerate-api (бесплатный, без ключа, CORS открытый)
   try {
-    const r = await fetch('https://api.bybit.com/v5/market/tickers?category=spot&symbol=USDTRUB');
+    const r = await fetch('https://api.exchangerate-api.com/v4/latest/USD');
     const d = await r.json();
-    const price = d?.result?.list?.[0]?.lastPrice;
-    if(price && +price > 1){
-      const rate = Math.round(+price);
-      document.getElementById('usd-rate').value = rate;
-      syncAll();
-      if(statusEl) statusEl.textContent = '✓ актуальный';
-      if(statusEl) statusEl.style.color = 'var(--green)';
-    } else throw new Error('no price');
-  } catch {
-    // Fallback: try USDT price via another endpoint
-    try {
-      const r2 = await fetch('https://api.bybit.com/v5/market/tickers?category=spot&symbol=RUBUSD');
-      const d2 = await r2.json();
-      const p2 = d2?.result?.list?.[0]?.lastPrice;
-      if(p2 && +p2 > 0){
-        const rate = Math.round(1 / +p2);
-        document.getElementById('usd-rate').value = rate;
-        syncAll();
-        if(statusEl) { statusEl.textContent = '✓ актуальный'; statusEl.style.color = 'var(--green)'; }
-      } else throw new Error();
-    } catch {
-      if(statusEl) { statusEl.textContent = 'авто недоступен'; statusEl.style.color = 'var(--muted)'; }
-    }
-  }
+    const rate = d?.rates?.RUB;
+    if(rate && rate > 1) { setRate(Math.round(rate)); return; }
+  } catch {}
+
+  // 2. Пробуем open.er-api.com
+  try {
+    const r = await fetch('https://open.er-api.com/v6/latest/USD');
+    const d = await r.json();
+    const rate = d?.rates?.RUB;
+    if(rate && rate > 1) { setRate(Math.round(rate)); return; }
+  } catch {}
+
+  // 3. Пробуем fawazahmed0 (бесплатный CDN)
+  try {
+    const r = await fetch('https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json');
+    const d = await r.json();
+    const rate = d?.usd?.rub;
+    if(rate && rate > 1) { setRate(Math.round(rate)); return; }
+  } catch {}
+
+  // Все источники недоступны
+  if(statusEl) { statusEl.textContent = 'введи вручную'; statusEl.style.color = 'var(--muted)'; }
 }
 
 const SC=[
