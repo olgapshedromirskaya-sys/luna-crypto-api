@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>LUNA — Crypto Intelligence</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root {
@@ -64,8 +65,22 @@
   .btn-toggle { padding: 7px 14px; border: 1px solid var(--border); border-radius: 6px; background: none; color: var(--muted); font-family: var(--font-mono); font-size: 11px; cursor: pointer; transition: all .2s; }
   .btn-toggle.active { background: rgba(0,212,255,.1); border-color: var(--accent); color: var(--accent); }
 
-  .analysis-box { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 18px; font-family: var(--font-mono); font-size: 12px; line-height: 1.9; min-height: 140px; white-space: pre-wrap; color: var(--text); }
-  .analysis-box.muted { color: var(--muted); }
+  .analysis-box { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 18px; font-size: 13px; line-height: 1.8; min-height: 140px; color: var(--text); }
+  .analysis-box.muted { color: var(--muted); font-family: var(--font-mono); }
+  .analysis-box h1,.analysis-box h2,.analysis-box h3 { font-family: var(--font-main); font-weight: 700; margin: 14px 0 8px; color: var(--accent); font-size: 13px; letter-spacing: 1px; text-transform: uppercase; }
+  .analysis-box h1 { font-size: 14px; color: var(--accent2); }
+  .analysis-box p { margin: 6px 0; line-height: 1.7; }
+  .analysis-box strong { color: var(--text); font-weight: 700; }
+  .analysis-box em { color: var(--muted); }
+  .analysis-box hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+  .analysis-box ul,.analysis-box ol { padding-left: 18px; margin: 6px 0; }
+  .analysis-box li { margin: 4px 0; line-height: 1.6; }
+  .analysis-box table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 12px; }
+  .analysis-box th { background: var(--surface2); color: var(--accent); padding: 7px 10px; text-align: left; border: 1px solid var(--border); font-size: 11px; letter-spacing: 1px; }
+  .analysis-box td { padding: 7px 10px; border: 1px solid var(--border); color: var(--text); vertical-align: top; }
+  .analysis-box tr:nth-child(even) td { background: rgba(255,255,255,.02); }
+  .analysis-box code { background: var(--surface2); padding: 2px 6px; border-radius: 4px; font-family: var(--font-mono); font-size: 11px; color: var(--accent); }
+  .analysis-box blockquote { border-left: 3px solid var(--accent2); padding-left: 12px; margin: 8px 0; color: var(--muted); }
 
   .badge { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; font-family: var(--font-mono); }
   .badge-green { background: rgba(0,232,138,.12); color: var(--green); }
@@ -832,7 +847,7 @@ R/R: ${rr}
       if (!aiText) aiText = '❌ ' + JSON.stringify(data?.error || data).slice(0,200);
     } catch(e) { aiText = '❌ Ошибка: ' + rawText.slice(0,200); }
     document.getElementById('analysis-output').className = 'analysis-box';
-    document.getElementById('analysis-output').textContent = aiText;
+    if (typeof marked !== 'undefined') { document.getElementById('analysis-output').innerHTML = marked.parse(aiText); } else { document.getElementById('analysis-output').textContent = aiText; }
 
   } catch(e) {
     document.getElementById('analysis-output').className = 'analysis-box';
