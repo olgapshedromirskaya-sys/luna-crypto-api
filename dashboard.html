@@ -572,6 +572,7 @@ function switchTab(n,el){
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.getElementById('tab-'+n).classList.add('active');
   if(el) el.classList.add('active');
+  if(n==='settings') loadSettingsPage();
 }
 function toggleMA(p){
   const b=document.getElementById('ma-btn-'+p);
@@ -1125,7 +1126,7 @@ function filterNews(type){
     <div style="padding:12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;background:var(--surface);">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:6px;">
         <div style="font-size:13px;font-weight:600;">${n.title}</div>
-        <span class="badge ${n.impact==='bullish'?'badge-green':n.impact==='bearish'?'badge-red':'badge-yellow'}" style="flex-shrink:0;">${n.impact==='bullish'?'📈':'n.impact==='bearish'?'📉':'➡️'}</span>
+        <span class="badge ${n.impact==='bullish'?'badge-green':n.impact==='bearish'?'badge-red':'badge-yellow'}" style="flex-shrink:0;">${n.impact==='bullish'?'📈':n.impact==='bearish'?'📉':'➡️'}</span>
       </div>
       <div style="font-size:12px;color:var(--muted);">${n.body}</div>
       <div style="font-size:10px;color:var(--muted);margin-top:4px;font-family:var(--font-mono);">${n.time}</div>
@@ -1367,12 +1368,7 @@ function saveModel(){
   setTimeout(()=>document.getElementById('model-save-status').textContent='', 3000);
 }
 
-// Override switchTab to load settings when opening
-const _origSwitchTab = switchTab;
-function switchTab(n, el){
-  _origSwitchTab(n, el);
-  if(n === 'settings') loadSettingsPage();
-}
+
 </script>
 </body>
 </html>
