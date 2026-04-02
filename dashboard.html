@@ -7,17 +7,56 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="LUNA">
 <meta name="theme-color" content="#080b10">
-<link rel="manifest" href="manifest.json">
+<link rel="manifest" href="data:application/json,{&quot;name&quot;:&quot;LUNA Crypto&quot;,&quot;short_name&quot;:&quot;LUNA&quot;,&quot;start_url&quot;:&quot;./dashboard.html&quot;,&quot;display&quot;:&quot;standalone&quot;,&quot;background_color&quot;:&quot;%23080b10&quot;,&quot;theme_color&quot;:&quot;%23080b10&quot;}">
 <title>LUNA — Crypto Intelligence</title>
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
-<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<script src="https://telegram.org/js/telegram-web-app.js" async></script>
+<script>
+// Minimal markdown renderer (no CDN dependency)
+const marked = {
+  parse: function(text) {
+    if(!text) return '';
+    return text
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      // Headers
+      .replace(/^### (.+)$/gm,'<h3>$1</h3>')
+      .replace(/^## (.+)$/gm,'<h2>$1</h2>')
+      .replace(/^# (.+)$/gm,'<h1>$1</h1>')
+      // Bold/italic
+      .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+      .replace(/\*(.+?)\*/g,'<em>$1</em>')
+      // Code
+      .replace(/`(.+?)`/g,'<code>$1</code>')
+      // HR
+      .replace(/^---$/gm,'<hr>')
+      // Bullet lists
+      .replace(/^\* (.+)$/gm,'<li>$1</li>')
+      .replace(/^- (.+)$/gm,'<li>$1</li>')
+      // Numbered lists  
+      .replace(/^\d+\. (.+)$/gm,'<li>$1</li>')
+      // Tables (simple)
+      .replace(/\|(.+)\|/g, function(match) {
+        const cells = match.split('|').filter(c=>c.trim()&&!c.match(/^[-:]+$/));
+        return '<tr>'+cells.map(c=>'<td>'+c.trim()+'</td>').join('')+'</tr>';
+      })
+      // Line breaks
+      .replace(/
+
+/g,'</p><p>')
+      .replace(/
+/g,'<br>')
+      // Wrap in paragraph
+      .replace(/^(.)/,'<p>$1')
+      + '</p>';
+  }
+};
+</script>
+
 <style>
 :root{
   --bg:#080b10;--surface:#0d1219;--surface2:#111820;--border:#1e2a38;
   --accent:#00d4ff;--accent2:#7b61ff;--green:#00e88a;--red:#ff4757;
   --yellow:#ffd32a;--orange:#ff9f43;--text:#e8edf5;--muted:#5a6a7e;
-  --font-mono:'Space Mono',monospace;--font-main:'Syne',sans-serif;
+  --font-mono:'SF Mono','Fira Code','Consolas',monospace;--font-main:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
 }
 *{margin:0;padding:0;box-sizing:border-box;}
 body{background:var(--bg);color:var(--text);font-family:var(--font-main);min-height:100vh;overflow-x:hidden;padding-bottom:env(safe-area-inset-bottom,0);}
