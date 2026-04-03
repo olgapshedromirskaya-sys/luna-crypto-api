@@ -279,6 +279,11 @@ select option{background:var(--bg);}
           <option>BNBUSDT</option><option>XRPUSDT</option><option>DOGEUSDT</option>
           <option>ADAUSDT</option><option>AVAXUSDT</option><option>DOTUSDT</option>
           <option>LTCUSDT</option><option>LINKUSDT</option><option>MATICUSDT</option>
+          <option>NEARUSDT</option><option>SUIUSDT</option><option>APTUSDT</option>
+          <option>INJUSDT</option><option>TIAUSDT</option><option>ARBUSDT</option>
+          <option>OPUSDT</option><option>TONUSDT</option><option>FETUSDT</option>
+          <option>RENDERUSDT</option><option>WLDUSDT</option><option>SEIUSDT</option>
+          <option>JUPUSDT</option>
         </select>
       </div>
       <div style="flex:1;">
@@ -581,10 +586,15 @@ let newsData      = [];
 let autoTimer     = null;
 let autoRunning   = false;
 
-const ALL_COINS   = ['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT',
-                     'DOGEUSDT','ADAUSDT','AVAXUSDT','DOTUSDT','LTCUSDT'];
+const ALL_COINS = [
+  'BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT',
+  'DOGEUSDT','ADAUSDT','AVAXUSDT','DOTUSDT','LTCUSDT',
+  'LINKUSDT','MATICUSDT','NEARUSDT','SUIUSDT','APTUSDT',
+  'INJUSDT','TIAUSDT','ARBUSDT','OPUSDT','TONUSDT',
+  'FETUSDT','RENDERUSDT','WLDUSDT','SEIUSDT','JUPUSDT'
+];
 let selectedCoins = JSON.parse(localStorage.getItem('luna_auto_coins')
-                    || JSON.stringify(['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT']));
+                    || JSON.stringify(['BTCUSDT','ETHUSDT','SOLUSDT']));
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', ()=>{
@@ -1070,8 +1080,35 @@ async function runAnalysis(){
       const d=JSON.parse(raw);
       const txt=d?.choices?.[0]?.message?.content||d?.content?.[0]?.text||'';
       outEl.className='analysis-box';
-      if(txt&&typeof marked!=='undefined'){ marked.setOptions({breaks:true,gfm:true}); outEl.innerHTML=marked.parse(txt); }
-      else outEl.textContent=txt||'❌ Нет ответа от AI';
+      if(txt){
+        // Clean any remaining markdown symbols and display as structured text
+        const clean = txt
+          .replace(/\*\*/g,'').replace(/\*/g,'').replace(/#{1,3}\s/g,'')
+          .replace(/---/g,'').replace(/\|/g,' ').trim();
+        // Split into sections by double newline and render
+        outEl.innerHTML = clean.split('\n\n').map(section=>{
+          const lines = section.trim().split('\n');
+          const isHeader = lines[0] === lines[0].toUpperCase() && lines[0].length < 50 && !lines[0].includes(':');
+          if(isHeader && lines.length > 1){
+            return '<div style="margin-bottom:12px;"><div style="font-size:11px;font-weight:700;color:var(--accent);letter-spacing:1px;margin-bottom:4px;">'+lines[0]+'</div><div style="font-size:13px;line-height:1.7;">'+lines.slice(1).join('<br>')+'</div></div>';
+          }
+          // Check if it's the СДЕЛКА section
+          if(section.includes('Тип:') || section.includes('Вход:') || section.includes('Стоп')){
+            const dealLines = lines.map(l=>{
+              if(l.startsWith('Тип:')) return '<div style="padding:4px 0;"><span style="color:var(--muted);font-size:11px;">ТИП:</span> <strong style="color:'+(l.includes('ЛОНГ')||l.includes('ПОКУПКА')?'var(--green)':'var(--red)')+'">'+l.replace('Тип:','').trim()+'</strong></div>';
+              if(l.startsWith('Вход:')) return '<div style="padding:4px 0;"><span style="color:var(--muted);font-size:11px;">ВХОД:</span> <strong>'+l.replace('Вход:','').trim()+'</strong></div>';
+              if(l.startsWith('Стоп')) return '<div style="padding:4px 0;"><span style="color:var(--muted);font-size:11px;">СТОП-ЛОСС:</span> <strong style="color:var(--red)">'+l.replace(/Стоп-лосс:/,'').trim()+'</strong></div>';
+              if(l.startsWith('Тейк')) return '<div style="padding:4px 0;"><span style="color:var(--muted);font-size:11px;">ТЕЙК-ПРОФИТ:</span> <strong style="color:var(--green)">'+l.replace(/Тейк-профит:/,'').trim()+'</strong></div>';
+              if(l.startsWith('Соотношение')) return '<div style="padding:4px 0;"><span style="color:var(--muted);font-size:11px;">R/R:</span> <strong style="color:var(--accent)">'+l.replace(/Соотношение риск\/прибыль:/,'').trim()+'</strong></div>';
+              if(l.startsWith('Плечо')) return '<div style="padding:4px 0;"><span style="color:var(--muted);font-size:11px;">ПЛЕЧО:</span> <strong>'+l.replace('Плечо:','').trim()+'</strong></div>';
+              if(l.startsWith('Уверенность')) return '<div style="padding:4px 0;"><span style="color:var(--muted);font-size:11px;">УВЕРЕННОСТЬ:</span> <strong>'+l.replace('Уверенность:','').trim()+'</strong></div>';
+              return l?'<div style="padding:2px 0;">'+l+'</div>':'';
+            }).join('');
+            return '<div style="margin-bottom:12px;"><div style="font-size:11px;font-weight:700;color:var(--accent);letter-spacing:1px;margin-bottom:6px;">ПАРАМЕТРЫ СДЕЛКИ</div><div style="background:var(--bg);border-radius:8px;padding:10px;font-family:var(--font-mono);font-size:12px;">'+dealLines+'</div></div>';
+          }
+          return '<div style="font-size:13px;line-height:1.7;margin-bottom:10px;">'+section.trim().replace(/\n/g,'<br>')+'</div>';
+        }).join('');
+      } else outEl.textContent='❌ Нет ответа от AI';
     }catch(e){ outEl.className='analysis-box'; outEl.textContent='❌ Ошибка: '+raw.slice(0,200); }
   }catch(e){
     outEl.className='analysis-box'; outEl.textContent='❌ Ошибка: '+e.message;
@@ -1145,16 +1182,45 @@ function jumpToAnalysis(coin){
 // ─── NEWS ─────────────────────────────────────────────────────────────────────
 async function loadNews(){
   const c=document.getElementById('news-container');
-  c.innerHTML=`<div style="text-align:center;padding:20px;"><div class="spinner" style="margin:auto;"></div></div>`;
-  const aiKey=localStorage.getItem('luna_ai_key')||'';
-  if(!aiKey){c.innerHTML='<div style="text-align:center;color:var(--muted);padding:20px;">Нужен AI ключ</div>';return;}
-  try{
-    const resp=await fetch(AI_API_URL,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+aiKey},body:JSON.stringify({model:getModel(),max_tokens:1500,messages:[{role:'user',content:'Сгенерируй 8 крипто новостей JSON: [{"title":"...","body":"...","type":"up|down","impact":"bullish|bearish|neutral","time":"X мин назад"}]. ТОЛЬКО JSON.'}]})});
-    const d=await resp.json();
-    const txt=d?.choices?.[0]?.message?.content||d?.content?.[0]?.text||'';
-    newsData=JSON.parse(txt.replace(/```json|```/g,'').trim());
-    filterNews('all');
-  }catch(e){c.innerHTML=`<div style="color:var(--red);padding:16px;">Ошибка: ${e.message}</div>`;}
+  c.innerHTML='<div style="text-align:center;padding:20px;"><div class="spinner" style="margin:auto;margin-bottom:8px;"></div><div style="font-size:12px;color:var(--muted);">Загружаю реальные новости...</div></div>';
+  
+  // Try CryptoPanic free API (no key needed, real crypto news)
+  const sources = [
+    'https://cryptopanic.com/api/free/v1/posts/?auth_token=free&kind=news&public=true&filter=hot',
+    'https://cryptopanic.com/api/free/v1/posts/?auth_token=free&kind=news&public=true',
+  ];
+  
+  for(const url of sources){
+    try{
+      const resp = await fetch(url);
+      if(!resp.ok) continue;
+      const d = await resp.json();
+      const items = d?.results || [];
+      if(!items.length) continue;
+      
+      newsData = items.slice(0,15).map(item=>{
+        const votes = item.votes || {};
+        const pos = (votes.positive||0), neg = (votes.negative||0);
+        const impact = pos > neg ? 'bullish' : neg > pos ? 'bearish' : 'neutral';
+        const type   = impact==='bullish'?'up':impact==='bearish'?'down':'neutral';
+        const pub = item.published_at ? new Date(item.published_at) : new Date();
+        const minsAgo = Math.round((Date.now()-pub.getTime())/60000);
+        const timeStr = minsAgo<60 ? minsAgo+'мин назад' : Math.round(minsAgo/60)+'ч назад';
+        return {
+          title: item.title||'',
+          body: (item.domain||'') + (item.currencies?.length ? ' · ' + item.currencies.map(c=>c.code).join(', ') : ''),
+          url: item.url||'',
+          type, impact,
+          time: timeStr
+        };
+      });
+      filterNews('all');
+      return;
+    }catch(e){ console.log('News source failed:', e); }
+  }
+  
+  // Fallback: show message
+  c.innerHTML='<div style="text-align:center;color:var(--muted);padding:30px;font-size:12px;">Не удалось загрузить новости.<br>Попробуй позже или проверь подключение.</div>';
 }
 function filterNews(type){
   ['all','up','down'].forEach(t=>{const b=document.getElementById('filter-'+t);if(b)b.className='btn btn-sm '+(t===type?'btn-primary':'btn-secondary');});
@@ -1162,13 +1228,13 @@ function filterNews(type){
   const f=type==='all'?newsData:newsData.filter(n=>n.type===type);
   if(!f.length){c.innerHTML='<div style="text-align:center;color:var(--muted);padding:20px;">Нет новостей</div>';return;}
   c.innerHTML=f.map(n=>`
-    <div style="padding:12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;background:var(--surface);">
+    <div onclick="${n.url?'window.open(\''+n.url+'\',\'_blank\')':''}" style="padding:12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;background:var(--surface);cursor:${n.url?'pointer':'default'};">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:6px;">
-        <div style="font-size:13px;font-weight:600;">${n.title}</div>
+        <div style="font-size:13px;font-weight:600;line-height:1.4;">${n.title}</div>
         <span class="badge ${n.impact==='bullish'?'badge-green':n.impact==='bearish'?'badge-red':'badge-yellow'}" style="flex-shrink:0;">${n.impact==='bullish'?'📈':n.impact==='bearish'?'📉':'➡️'}</span>
       </div>
-      <div style="font-size:12px;color:var(--muted);">${n.body}</div>
-      <div style="font-size:10px;color:var(--muted);margin-top:4px;font-family:var(--font-mono);">${n.time}</div>
+      ${n.body?`<div style="font-size:11px;color:var(--muted);margin-bottom:4px;">${n.body}</div>`:''}
+      <div style="font-size:10px;color:var(--muted);font-family:var(--font-mono);">${n.time}${n.url?' · нажми чтобы читать':''}</div>
     </div>`).join('');
 }
 
