@@ -1071,9 +1071,68 @@ async function runAnalysis(){
     outEl.textContent='🤖 AI анализирует...';
     const nearR=resLevels[0]?fmtP(resLevels[0]):'нет';
     const nearS=supLevels[0]?fmtP(supLevels[0]):'нет';
-    const prompt=`Ты профессиональный трейдер. 6-пунктовый анализ ${symbol} на ${tfLabel}.
-ДАННЫЕ: Цена: ${fmtP(price)}, MA20: ${fmtP(v20)}, MA50: ${fmtP(v50)}, MA200: ${fmtP(v200)}, RSI: ${rsiVal.toFixed(1)}, Паттерн: ${patterns[0].name}, Объём: ×${vol.ratio.toFixed(2)} ${vol.bull?'бычий':'медвежий'}, Сопротивление: ${nearR}, Поддержка: ${nearS}
-Ответь по 6 пунктам: 1.ТРЕНД 1Д 2.КЛЮЧЕВЫЕ УРОВНИ 3.ЦЕНА У УРОВНЯ? 4.ПОДТВЕРЖДЕНИЕ (паттерн/объём/отскок/MA200) 5.СТОП И ТЕЙК с R:R 1:3 6.РЕКОМЕНДАЦИЯ (ЛОНГ/ШОРТ/СПОТ, цена входа, плечо). Кратко. На русском.`;
+    // Риск-менеджмент: стоп 1%, тейк 3% — считаем сами
+    const slLong  = (price * 0.990).toFixed(price>=100?2:price>=1?4:6);
+    const tp1Long = (price * 1.030).toFixed(price>=100?2:price>=1?4:6);
+    const tp2Long = (price * 1.045).toFixed(price>=100?2:price>=1?4:6);
+    const slShort  = (price * 1.010).toFixed(price>=100?2:price>=1?4:6);
+    const tp1Short = (price * 0.970).toFixed(price>=100?2:price>=1?4:6);
+    const tp2Short = (price * 0.955).toFixed(price>=100?2:price>=1?4:6);
+
+    const prompt=`Ты профессиональный трейдер. Анализ ${symbol} на ${tfLabel}.
+
+ДАННЫЕ:
+Цена: ${fmtP(price)}
+MA20: ${fmtP(v20)} (цена ${price>v20?'ВЫШЕ':'НИЖЕ'})
+MA50: ${fmtP(v50)} (цена ${price>v50?'ВЫШЕ':'НИЖЕ'})
+MA200: ${fmtP(v200)} (цена ${price>v200?'ВЫШЕ':'НИЖЕ'})
+RSI: ${rsiVal.toFixed(1)}
+Паттерн: ${patterns[0].name}
+Объём: x${vol.ratio.toFixed(2)} (${vol.bull?'бычий':'медвежий'})
+Сопротивление: ${nearR}
+Поддержка: ${nearS}
+
+Отвечай БЕЗ символов * # --- |. Только обычный текст с заглавными заголовками.
+
+ТРЕНД
+Бычий, медвежий или боковик? Почему — 2 предложения.
+
+КЛЮЧЕВЫЕ УРОВНИ
+Назови конкретные уровни простыми словами.
+
+СИТУАЦИЯ
+Где цена сейчас? Пошла к уровню или нет?
+
+ПОДТВЕРЖДЕНИЕ
+Паттерн: [оценка]
+Объём: [оценка]
+Цена у уровня: [да/нет]
+MA200: [оценка]
+Итого: [X] из 4 подтверждений
+
+ПАРАМЕТРЫ СДЕЛКИ
+Реши — ЛОНГ или ШОРТ. Используй ТОЛЬКО эти уровни (рассчитаны по правилу стоп 1%, тейк 3%):
+
+Если ЛОНГ:
+Тип: ЛОНГ (фьючерс) / ПОКУПКА (спот)
+Вход: ${fmtP(price)}
+Стоп-лосс: ${slLong} (−1%)
+Тейк-профит: ${tp1Long} (+3%, R:R = 1:3)
+Тейк-профит 2: ${tp2Long} (+4.5%, R:R = 1:4.5)
+Плечо: x[число]
+Уверенность: [%]
+
+Если ШОРТ:
+Тип: ШОРТ (фьючерс) / ПРОДАЖА (спот)
+Вход: ${fmtP(price)}
+Стоп-лосс: ${slShort} (+1%)
+Тейк-профит: ${tp1Short} (−3%, R:R = 1:3)
+Тейк-профит 2: ${tp2Short} (−4.5%, R:R = 1:4.5)
+Плечо: x[число]
+Уверенность: [%]
+
+ВЫВОД
+Стоит ли входить сейчас? Одно чёткое предложение.\`;
     const resp=await fetch(AI_API_URL,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+aiKey},body:JSON.stringify({model:getModel(),max_tokens:1200,messages:[{role:'user',content:prompt}]})});
     const raw=await resp.text();
     try{
